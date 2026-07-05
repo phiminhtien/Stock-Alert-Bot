@@ -1,0 +1,37 @@
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+
+WATCHLIST = [
+    "PLX",
+    "BSR",
+    "VIC",
+    "MBB",
+    "HPG",
+    "SSI",
+]
+
+TIMEZONE = "Asia/Ho_Chi_Minh"
+
+NOTIFY_INTERVAL_MINUTES = 30
+
+RSI_OVERSOLD = 30
+RSI_OVERBOUGHT = 70
+ATR_STOP_LOSS_FACTOR = 1.5
+MIN_RR_RATIO = 2.0
+EMA_SHORT = 20
+EMA_LONG = 50
+RSI_PERIOD = 14
+ATR_PERIOD = 14
+MACD_FAST = 12
+MACD_SLOW = 26
+MACD_SIGNAL = 9
+BB_PERIOD = 20
+BB_STD = 2
+VOLUME_MA_PERIOD = 20
+VOLUME_SPIKE_RATIO = 1.5
+HISTORICAL_DAYS = 250
