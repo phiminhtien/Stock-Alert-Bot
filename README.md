@@ -1,6 +1,6 @@
 # VN Stock Bot - Bot Telegram Thông báo Chứng khoán Việt Nam
 
-Bot Python tự động quét dữ liệu chứng khoán Việt Nam, tính toán chỉ báo kỹ thuật, và gửi báo cáo phân tích chi tiết qua Telegram.
+Bot Python tự động quét dữ liệu chứng khoán Việt Nam, tính toán chỉ báo kỹ thuật, và gửi báo cáo phân tích chi tiết qua Telegram. Có thể chạy local hoặc trên GitHub Actions free tier.
 
 ## Cài đặt
 
@@ -9,33 +9,54 @@ Bot Python tự động quét dữ liệu chứng khoán Việt Nam, tính toán
 git clone <repo-url>
 cd bot_alert_stock
 
+# Tạo môi trường ảo (tùy chọn)
+python -m venv .venv
+source .venv/Scripts/activate  # Windows Git Bash
+
 # Cài dependencies
 pip install -r vn-stock-bot/requirements.txt
 
-# Cấu hình Telegram
+# Cấu hình Telegram + watchlist
 cp vn-stock-bot/.env.example vn-stock-bot/.env
 ```
 
 Chỉnh sửa `.env`:
-```
+```ini
 TELEGRAM_BOT_TOKEN=your_bot_token
 TELEGRAM_CHAT_ID=your_chat_id
+STOCK_CODES=FPT,VCB,VHM,VNM,HDB
 ```
 
 ### Tạo Bot Telegram
-1. Messaging @BotFather trên Telegram → `/newbot`
-2. Lấy token, paste vào `.env`
-3. Gửi tin nhắn cho bot, rồi truy cập `https://api.telegram.org/bot<TOKEN>/getUpdates` để lấy `chat_id`
+1. Chat với [@BotFather](https://t.me/BotFather) → `/newbot` → đặt tên → nhận token
+2. Chat với bot vừa tạo → gửi 1 tin nhắn bất kỳ
+3. Lấy `chat_id`: vào `https://api.telegram.org/bot<TOKEN>/getUpdates` → lấy số `chat.id`
 
 ## Chạy
 
+### Local
 ```bash
 py vn-stock-bot/main.py
 ```
 
-## Cấu trúc báo cáo
+### GitHub Actions (recommended, không cần VPS)
+1. Push code lên GitHub
+2. Vào **Settings → Secrets and variables → Actions** → thêm:
+   - `TELEGRAM_BOT_TOKEN`
+   - `TELEGRAM_CHAT_ID`
+   - `STOCK_CODES` (VD: `FPT,VCB,VHM`)
+3. Workflow `scan-daily.yml` tự chạy 8:30 AM VN (t2–t6), hoặc vào tab Actions → Run workflow
 
-### Phân tích từng mã
+## Lịch gửi
+
+| Giờ VN | Job | Nội dung |
+|---|---|---|
+| 08:30 | `pre_market` | Báo cáo đầu ngày: cổ phiếu tiềm năng + downtrend |
+| 09:00–14:45 | `session` | Mỗi 15 phút: phân tích chi tiết top 5 mã biến động + tín hiệu mới |
+| 14:30 | `pre_close` | Cảnh báo biến động >3% trước ATC |
+| 15:15 | `post_market` | Tổng kết phiên: top biến động + xu hướng + volume |
+
+## Mẫu báo cáo
 
 ```
 📊 PHÂN TÍCH MÃ VHM
@@ -74,46 +95,41 @@ py vn-stock-bot/main.py
 🟡 KHUYẾN NGHỊ: THEO DÕI
 ```
 
-### Lịch gửi
-
-| Thời gian | Nội dung |
-|---|---|
-| 08:30 | Báo cáo đầu ngày: cổ phiếu tiềm năng + downtrend |
-| 09:00–14:45 | Mỗi 15 phút: phân tích top 5 mã + tín hiệu mới |
-| 14:30 | Cảnh báo biến động >3% trước ATC |
-| 15:15 | Tổng kết phiên: top biến động + xu hướng |
-
 ## Cấu hình
 
-Sửa `vn-stock-bot/config.py`:
+Sửa biến môi trường trong `.env` hoặc GitHub Secrets:
+
+| Biến | Mô tả | Ví dụ |
+|---|---|---|
+| `TELEGRAM_BOT_TOKEN` | Token bot Telegram | `123456:ABC-DEF...` |
+| `TELEGRAM_CHAT_ID` | Chat ID nhận tin | `-100123456789` |
+| `STOCK_CODES` | Danh sách mã theo dõi (phân cách bằng dấu phẩy) | `FPT,VCB,VHM` |
+
+Chỉnh ngưỡng kỹ thuật trong `vn-stock-bot/config.py`:
 
 ```python
-# Danh sách mã theo dõi
-WATCHLIST = ["FPT", "VCB", "VHM", ...]
-
-# Tần suất báo cáo giữa phiên (phút)
-NOTIFY_INTERVAL_MINUTES = 15
-
-# Các ngưỡng kỹ thuật
-RSI_OVERSOLD = 30
-RSI_OVERBOUGHT = 70
-ATR_STOP_LOSS_FACTOR = 1.5
-MIN_RR_RATIO = 2.0
+NOTIFY_INTERVAL_MINUTES = 15    # tần suất báo cáo giữa phiên
+RSI_OVERSOLD = 30               # ngưỡng quá bán
+RSI_OVERBOUGHT = 70             # ngưỡng quá mua
+ATR_STOP_LOSS_FACTOR = 1.5      # hệ số ATR cho stop-loss
+MIN_RR_RATIO = 2.0              # tỷ lệ risk:reward tối thiểu
 ```
 
 ## Module
 
 | File | Mô tả |
 |---|---|
-| `config.py` | Cấu hình: watchlist, token, ngưỡng |
-| `data_fetcher.py` | Lấy dữ liệu từ vnstock API (VCI) |
-| `indicators.py` | Tính chỉ báo: MA, RSI, MACD, ATR, BB |
-| `signals.py` | Logic sinh tín hiệu entry/stop/take |
-| `telegram_notify.py` | Gửi Telegram + format báo cáo |
-| `main.py` | APScheduler chạy 4 job theo lịch |
+| `config.py` | Cấu hình: Telegram, watchlist, ngưỡng kỹ thuật |
+| `data_fetcher.py` | Lấy dữ liệu OHLCV từ vnstock API (VCI source) |
+| `indicators.py` | Tính chỉ báo: EMA, SMA, RSI, MACD, ATR, BB (thuần pandas) |
+| `signals.py` | Logic phát hiện entry, stop-loss, take-profit, potential, downtrend |
+| `telegram_notify.py` | Gửi Telegram + format báo cáo phân tích chi tiết |
+| `main.py` | AsyncIOScheduler: 4 job theo cron |
+| `.github/workflows/scan-daily.yml` | GitHub Actions: chạy bot hàng ngày 8:30 AM VN |
 
 ## Yêu cầu
 
 - Python >= 3.10
 - Kết nối internet (gọi vnstock API)
 - Telegram Bot Token + Chat ID
+- (Optional) GitHub account nếu dùng GitHub Actions

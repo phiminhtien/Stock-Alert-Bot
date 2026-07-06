@@ -1,3 +1,12 @@
+"""Entry point & scheduler cho bot chứng khoán.
+
+Dùng AsyncIOScheduler (APScheduler) với 4 job:
+- pre_market (8:30)
+- scan_session (9:00-14:45, mỗi 15 phút)
+- pre_close (14:30)
+- post_market (15:15)
+"""
+
 import asyncio
 import logging
 import pandas as pd
@@ -31,6 +40,7 @@ fetcher = DataFetcher()
 
 
 async def scan_pre_market():
+    """Job 8:30 AM: quét watchlist, gửi báo cáo tiềm năng + downtrend."""
     logger.info("=== Pre-market scan started ===")
     data = fetcher.fetch_multiple_historical()
     if not data:
@@ -50,6 +60,7 @@ async def scan_pre_market():
 
 
 async def scan_session():
+    """Job giữa phiên: phân tích top 5 mã biến động + gửi tín hiệu mới."""
     logger.info("=== Session scan started ===")
     data = fetcher.fetch_multiple_historical()
     if not data:
@@ -86,6 +97,7 @@ async def scan_session():
 
 
 async def scan_pre_close():
+    """Job 14:30: cảnh báo mã có biến động giá > 3% trước giờ ATC."""
     logger.info("=== Pre-close scan started ===")
     warning_signals = []
     data = fetcher.fetch_multiple_historical()
@@ -111,6 +123,7 @@ async def scan_pre_close():
 
 
 async def scan_post_market():
+    """Job 15:15: tổng kết phiên — top biến động + xu hướng + volume."""
     logger.info("=== Post-market scan started ===")
     data = fetcher.fetch_multiple_historical()
     if not data:
@@ -147,6 +160,7 @@ async def scan_post_market():
 
 
 async def _run_forever():
+    """Khởi tạo scheduler, đăng ký 4 job, chạy và giữ event loop."""
     scheduler = AsyncIOScheduler(timezone=TIMEZONE)
 
     scheduler.add_job(
@@ -194,6 +208,7 @@ async def _run_forever():
 
 
 def main():
+    """Hàm entry point chính. Gọi asyncio.run() để chạy scheduler."""
     try:
         asyncio.run(_run_forever())
     except KeyboardInterrupt:

@@ -1,3 +1,9 @@
+"""Logic sinh tín hiệu giao dịch từ DataFrame đã tính chỉ báo.
+
+Đầu vào: DataFrame với các cột từ indicators.py.
+Đầu ra: list dict tín hiệu (entry, stop_loss, take_profit, potential, downtrend).
+"""
+
 import logging
 import pandas as pd
 from typing import List, Dict
@@ -9,34 +15,54 @@ from config import (
 
 logger = logging.getLogger(__name__)
 
+
 def _ema_cross_up(row: pd.Series) -> bool:
+    """Kiểm tra EMA short cắt lên EMA long."""
     return (
         not pd.isna(row.get("ema_short"))
         and not pd.isna(row.get("ema_long"))
         and row["ema_short"] > row["ema_long"]
     )
 
+
 def _volume_spike(row: pd.Series) -> bool:
+    """Kiểm tra khối lượng có đột biến so với trung bình 20 phiên."""
     vol_ma = row.get("volume_ma")
     return not pd.isna(vol_ma) and vol_ma > 0 and row["volume"] > vol_ma * VOLUME_SPIKE_RATIO
 
+
 def _is_uptrend(row: pd.Series) -> bool:
+    """Kiểm tra uptrend: giá đóng > SMA50 và SMA200."""
     sma50 = row.get("sma_50")
     sma200 = row.get("sma_200")
     return not pd.isna(sma50) and not pd.isna(sma200) and row["close"] > sma50 and row["close"] > sma200
 
+
 def _is_downtrend(row: pd.Series) -> bool:
+    """Kiểm tra downtrend: giá đóng < SMA50 và SMA200."""
     sma50 = row.get("sma_50")
     sma200 = row.get("sma_200")
     return not pd.isna(sma50) and not pd.isna(sma200) and row["close"] < sma50 and row["close"] < sma200
 
+
 def _macd_bearish(df: pd.DataFrame) -> bool:
+    """Kiểm tra MACD histogram âm liên tiếp 5 phiên."""
     if "macd_hist" not in df.columns:
         return False
     recent = df.tail(5)
     return (recent["macd_hist"] < 0).all()
 
+
 def detect_entry(df: pd.DataFrame, symbol: str) -> List[Dict]:
+    """Phát hiện tín hiệu mua (entry).
+
+    Hai điều kiện:
+    1. EMA20 cắt lên EMA50 kèm volume > 1.5x volume MA20.
+    2. RSI hồi phục từ vùng oversold (< 30) kèm volume tăng.
+
+    Returns:
+        Mỗi tín hiệu gồm: symbol, type="entry", price, stop_loss, take_profit, reason.
+    """
     signals = []
     if len(df) < 3:
         return signals
@@ -85,7 +111,15 @@ def detect_entry(df: pd.DataFrame, symbol: str) -> List[Dict]:
 
     return signals
 
+
 def detect_stop_loss(df: pd.DataFrame, symbol: str) -> List[Dict]:
+    """Tính giá cắt lỗ động dựa trên ATR.
+
+    stop_loss = close - ATR × factor.
+
+    Returns:
+        Mỗi tín hiệu gồm: symbol, type="stop_loss", price, stop_loss, reason.
+    """
     signals = []
     if len(df) < 2:
         return signals
@@ -105,7 +139,15 @@ def detect_stop_loss(df: pd.DataFrame, symbol: str) -> List[Dict]:
     })
     return signals
 
+
 def detect_take_profit(df: pd.DataFrame, symbol: str) -> List[Dict]:
+    """Phát hiện tín hiệu chốt lời.
+
+    Trail theo EMA20 nếu giá đã tăng hơn 5% so với 2 phiên trước.
+
+    Returns:
+        Mỗi tín hiệu gồm: symbol, type="take_profit", price, reason.
+    """
     signals = []
     if len(df) < 2:
         return signals
@@ -120,7 +162,18 @@ def detect_take_profit(df: pd.DataFrame, symbol: str) -> List[Dict]:
         })
     return signals
 
+
 def detect_potential(df: pd.DataFrame, symbol: str) -> List[Dict]:
+    """Phát hiện cổ phiếu tiềm năng.
+
+    Điều kiện (cần >= 2/3):
+    - Giá > SMA50 và SMA200 (uptrend)
+    - RSI < 40
+    - Volume đột biến
+
+    Returns:
+        Mỗi tín hiệu gồm: symbol, type="potential", price, rsi, reason.
+    """
     signals = []
     if df.empty:
         return signals
@@ -152,7 +205,18 @@ def detect_potential(df: pd.DataFrame, symbol: str) -> List[Dict]:
         })
     return signals
 
+
 def detect_downtrend(df: pd.DataFrame, symbol: str) -> List[Dict]:
+    """Phát hiện cổ phiếu downtrend.
+
+    Điều kiện (cần >= 1):
+    - Giá < SMA50 và SMA200
+    - MACD histogram âm 5 phiên liên tiếp
+    - RSI < 40 + volume bán tăng
+
+    Returns:
+        Mỗi tín hiệu gồm: symbol, type="downtrend", price, rsi, reason.
+    """
     signals = []
     if df.empty:
         return signals
@@ -180,7 +244,16 @@ def detect_downtrend(df: pd.DataFrame, symbol: str) -> List[Dict]:
         })
     return signals
 
+
 def scan_all(data: dict) -> List[Dict]:
+    """Quét toàn bộ watchlist và tập hợp tất cả tín hiệu.
+
+    Args:
+        data: Dict {symbol: DataFrame} chứa dữ liệu đã tính chỉ báo.
+
+    Returns:
+        List tín hiệu (entry, take_profit, potential, downtrend) từ tất cả mã.
+    """
     all_signals = []
     for symbol, df in data.items():
         all_signals.extend(detect_entry(df, symbol))

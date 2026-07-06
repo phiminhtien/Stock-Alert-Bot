@@ -1,3 +1,8 @@
+"""Gửi thông báo Telegram và định dạng báo cáo phân tích.
+
+Sử dụng python-telegram-bot (async) để gửi tin nhắn qua Bot API.
+"""
+
 import logging
 import pandas as pd
 from telegram import Bot
@@ -9,7 +14,9 @@ logger = logging.getLogger(__name__)
 
 _bot: Bot | None = None
 
+
 def _get_bot() -> Bot:
+    """Lấy hoặc tạo singleton Bot instance."""
     global _bot
     if _bot is None:
         if not TELEGRAM_BOT_TOKEN:
@@ -17,7 +24,17 @@ def _get_bot() -> Bot:
         _bot = Bot(token=TELEGRAM_BOT_TOKEN)
     return _bot
 
+
 async def send_message(text: str, chat_id: str | None = None) -> bool:
+    """Gửi tin nhắn Markdown qua Telegram.
+
+    Args:
+        text: Nội dung tin nhắn (hỗ trợ Markdown).
+        chat_id: ID chat nhận tin. Mặc định dùng TELEGRAM_CHAT_ID.
+
+    Returns:
+        True nếu gửi thành công, False nếu lỗi.
+    """
     cid = chat_id or TELEGRAM_CHAT_ID
     if not cid:
         logger.warning("TELEGRAM_CHAT_ID not configured")
@@ -33,13 +50,24 @@ async def send_message(text: str, chat_id: str | None = None) -> bool:
         logger.error("Failed to send Telegram message: %s", e)
         return False
 
+
 def escape_markdown(text: str) -> str:
+    """Escape các ký tự đặc biệt trong Markdown.
+
+    Args:
+        text: Chuỗi cần escape.
+
+    Returns:
+        Chuỗi đã escape.
+    """
     special = ["_", "*", "[", "]", "(", ")", "~", "`", ">", "#", "+", "-", "=", "|", "{", "}", ".", "!"]
     for ch in special:
         text = text.replace(ch, f"\\{ch}")
     return text
 
+
 def _rsi_label(rsi: float) -> str:
+    """Trả về nhãn mô tả trạng thái RSI."""
     if pd.isna(rsi):
         return "N/A"
     if rsi <= 30:
@@ -52,7 +80,9 @@ def _rsi_label(rsi: float) -> str:
         return "mạnh"
     return "trung tính"
 
+
 def _trend_label(row) -> str:
+    """Trả về nhãn xu hướng dựa trên SMA50/SMA200."""
     sma50 = row.get("sma_50")
     sma200 = row.get("sma_200")
     close = row.get("close")
@@ -64,7 +94,9 @@ def _trend_label(row) -> str:
         return "xu hướng xuống"
     return "sideways"
 
+
 def _volume_label(row) -> str:
+    """Trả về nhãn volume so với trung bình 20 phiên."""
     vol = row.get("volume", 0)
     vol_ma = row.get("volume_ma", 0)
     if pd.isna(vol_ma) or vol_ma == 0:
@@ -76,7 +108,9 @@ def _volume_label(row) -> str:
         return f"cao x{ratio:.1f}"
     return ""
 
+
 def _macd_label(row) -> str:
+    """Trả về trạng thái MACD histogram (dương/âm)."""
     hist = row.get("macd_hist")
     signal = row.get("macd_signal")
     macd = row.get("macd")
@@ -86,11 +120,12 @@ def _macd_label(row) -> str:
         return "dương"
     return "âm"
 
+
 def _bb_label(row) -> str:
+    """Trả về vị trí giá so với Bollinger Bands."""
     close = row.get("close")
     upper = row.get("bb_upper")
     lower = row.get("bb_lower")
-    mid = row.get("bb_middle")
     if pd.isna(close) or pd.isna(upper) or pd.isna(lower):
         return ""
     if close >= upper:
@@ -99,7 +134,24 @@ def _bb_label(row) -> str:
         return "sát dưới BB"
     return ""
 
+
+def _fmt(v) -> str:
+    """Format số thành chuỗi 2 chữ số thập phân. Trả 'N/A' nếu NaN."""
+    if pd.isna(v):
+        return "N/A"
+    return f"{v:.2f}"
+
+
 def format_pre_market_report(potential: list, downtrend: list) -> str:
+    """Định dạng báo cáo trước phiên (8:30 AM).
+
+    Args:
+        potential: Danh sách tín hiệu tiềm năng.
+        downtrend: Danh sách tín hiệu downtrend.
+
+    Returns:
+        Chuỗi Markdown báo cáo.
+    """
     lines = ["*[TRƯỚC PHIÊN]* Báo cáo đầu ngày"]
     lines.append("")
     if potential:
@@ -121,7 +173,16 @@ def format_pre_market_report(potential: list, downtrend: list) -> str:
     lines.append("— Bot hỗ trợ đầu tư —")
     return "\n".join(lines)
 
+
 def format_post_market_report(summary: list) -> str:
+    """Định dạng báo cáo sau phiên (15:15 PM).
+
+    Args:
+        summary: List dict chứa symbol, change (%), vol_ratio, trend.
+
+    Returns:
+        Chuỗi Markdown báo cáo tổng kết.
+    """
     lines = ["*[SAU PHIÊN]* Tổng kết phiên giao dịch"]
     lines.append("")
     for item in summary:
@@ -134,12 +195,20 @@ def format_post_market_report(summary: list) -> str:
     lines.append("— Bot hỗ trợ đầu tư —")
     return "\n".join(lines)
 
-def _fmt(v) -> str:
-    if pd.isna(v):
-        return "N/A"
-    return f"{v:.2f}"
 
 def format_stock_analysis(symbol: str, df: pd.DataFrame) -> str:
+    """Phân tích chi tiết một mã chứng khoán.
+
+    Hiển thị: giá, khung giá, KL, điểm vào lệnh, điểm chốt lời,
+    hỗ trợ/kháng cự, chiến lược giao dịch, khuyến nghị.
+
+    Args:
+        symbol: Mã chứng khoán.
+        df: DataFrame đã tính chỉ báo (ít nhất 2 dòng).
+
+    Returns:
+        Chuỗi Markdown báo cáo phân tích.
+    """
     cur = df.iloc[-1]
     pre = df.iloc[-2]
 
@@ -317,6 +386,17 @@ def format_stock_analysis(symbol: str, df: pd.DataFrame) -> str:
 
 
 def format_session_report(data: dict, signals: list) -> str:
+    """Định dạng báo cáo giữa phiên.
+
+    Gộp phân tích top 5 mã biến động mạnh nhất + danh sách tín hiệu mới.
+
+    Args:
+        data: Dict {symbol: DataFrame} với chỉ báo.
+        signals: List tín hiệu mới phát hiện.
+
+    Returns:
+        Chuỗi Markdown báo cáo.
+    """
     now = pd.Timestamp.now(tz="Asia/Ho_Chi_Minh").strftime("%H:%M %d/%m")
     lines = [f"*🔔 GIỮA PHIÊN — Cập nhật {now}*"]
     lines.append("")
@@ -332,7 +412,7 @@ def format_session_report(data: dict, signals: list) -> str:
 
     sorted_items.sort(key=lambda x: abs(x[2]), reverse=True)
 
-    for symbol, df, change_pct in sorted_items[:5]:
+    for symbol, df, _ in sorted_items[:5]:
         analysis = format_stock_analysis(symbol, df)
         lines.append(analysis)
         lines.append("")

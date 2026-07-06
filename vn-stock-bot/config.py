@@ -1,17 +1,25 @@
+"""Cấu hình bot giao dịch chứng khoán.
+
+Đọc thông tin từ biến môi trường (.env) và định nghĩa các tham số kỹ thuật.
+"""
+
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
 
+# ── Telegram ──────────────────────────────────────────────
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
+# ── Watchlist ─────────────────────────────────────────────
 WATCHLIST = os.getenv("STOCK_CODES", "").split(",")
 
+# ── Thời gian ─────────────────────────────────────────────
 TIMEZONE = "Asia/Ho_Chi_Minh"
-
 NOTIFY_INTERVAL_MINUTES = 15
 
+# ── Chỉ báo kỹ thuật ─────────────────────────────────────
 RSI_OVERSOLD = 30
 RSI_OVERBOUGHT = 70
 ATR_STOP_LOSS_FACTOR = 1.5
