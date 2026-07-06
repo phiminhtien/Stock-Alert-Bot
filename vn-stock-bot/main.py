@@ -183,7 +183,7 @@ async def _run_forever():
     scheduler.add_job(
         scan_session,
         CronTrigger(
-            # hour="9-14",
+            hour="9-14",
             minute=f"*/{NOTIFY_INTERVAL_MINUTES}",
             timezone=TIMEZONE,
             day_of_week="mon-fri"
