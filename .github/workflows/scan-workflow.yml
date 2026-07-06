@@ -1,4 +1,4 @@
-name: VN Stock Bot - Sáng
+name: VN Stock Bot
 
 on:
   schedule:
@@ -8,7 +8,7 @@ on:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 230
+    timeout-minutes: 420
     defaults:
       run:
         working-directory: vn-stock-bot
