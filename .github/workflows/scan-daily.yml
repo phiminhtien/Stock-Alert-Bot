@@ -1,4 +1,4 @@
-name: VN Stock Bot
+name: Scan Daily #VN Stock Bot
 
 on:
   schedule:
