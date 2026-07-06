@@ -19,8 +19,8 @@ class DataFetcher:
         self, symbol: str, start: str = "2024-01-01", end: str | None = None
     ) -> pd.DataFrame:
         cache_key = f"hist_{symbol}_{start}_{end}"
-        if cache_key in self._cache:
-            return self._cache[cache_key]
+        # if cache_key in self._cache:
+        #     return self._cache[cache_key]
 
         try:
             if end is None:
@@ -41,7 +41,7 @@ class DataFetcher:
             df = df.rename(columns=col_map)
             df = df.sort_values("time").reset_index(drop=True)
 
-            self._cache[cache_key] = df
+            # self._cache[cache_key] = df
             return df
         except Exception as e:
             logger.warning("Failed to fetch historical data for %s: %s", symbol, e)
