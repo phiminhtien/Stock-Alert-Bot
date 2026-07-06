@@ -18,7 +18,7 @@ from apscheduler.triggers.cron import CronTrigger
 from config import WATCHLIST, TIMEZONE, NOTIFY_INTERVAL_MINUTES
 from data_fetcher import DataFetcher
 from indicators import compute_indicators_batch
-from signals import scan_all, detect_potential, detect_downtrend
+from signals import scan_all, detect_potential, detect_downtrend, detect_entry_opportunity
 from telegram_notify import (
     send_message,
     format_pre_market_report,
@@ -67,6 +67,17 @@ async def scan_session():
         return
     data = compute_indicators_batch(data)
     signals = scan_all(data)
+    opportunities = detect_entry_opportunity(data)
+
+    if opportunities:
+        lines = ["🎯 *ĐIỂM VÀO LỊNH HỢP LÝ:*"]
+        for opp in opportunities[:5]:
+            lines.append(f"  ✅ *{opp['symbol']}* — {opp['entry_score']}/10 — {opp['price']}đ")
+            if opp.get("reason"):
+                lines.append(f"    └ {opp['reason']}")
+        lines.append("")
+        await send_message("\n".join(lines))
+        await asyncio.sleep(0.5)
 
     sorted_items = []
     for symbol, df in data.items():
@@ -172,7 +183,7 @@ async def _run_forever():
     scheduler.add_job(
         scan_session,
         CronTrigger(
-            hour="9-14",
+            # hour="9-14",
             minute=f"*/{NOTIFY_INTERVAL_MINUTES}",
             timezone=TIMEZONE,
             day_of_week="mon-fri"

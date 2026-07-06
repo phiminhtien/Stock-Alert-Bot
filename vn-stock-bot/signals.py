@@ -112,34 +112,6 @@ def detect_entry(df: pd.DataFrame, symbol: str) -> List[Dict]:
     return signals
 
 
-def detect_stop_loss(df: pd.DataFrame, symbol: str) -> List[Dict]:
-    """Tính giá cắt lỗ động dựa trên ATR.
-
-    stop_loss = close - ATR × factor.
-
-    Returns:
-        Mỗi tín hiệu gồm: symbol, type="stop_loss", price, stop_loss, reason.
-    """
-    signals = []
-    if len(df) < 2:
-        return signals
-
-    curr = df.iloc[-1]
-    atr = curr.get("atr")
-    if pd.isna(atr) or atr == 0:
-        return signals
-
-    stop_price = curr["close"] - atr * ATR_STOP_LOSS_FACTOR
-    signals.append({
-        "symbol": symbol,
-        "type": "stop_loss",
-        "price": round(curr["close"], 2),
-        "stop_loss": round(stop_price, 2),
-        "reason": f"Stop-loss động: ATR x {ATR_STOP_LOSS_FACTOR}",
-    })
-    return signals
-
-
 def detect_take_profit(df: pd.DataFrame, symbol: str) -> List[Dict]:
     """Phát hiện tín hiệu chốt lời.
 
@@ -261,3 +233,83 @@ def scan_all(data: dict) -> List[Dict]:
         all_signals.extend(detect_potential(df, symbol))
         all_signals.extend(detect_downtrend(df, symbol))
     return all_signals
+
+
+def _compute_entry_score(row) -> float:
+    """Tính điểm vào lệnh từ chỉ báo hiện tại (thang 0-10)."""
+    score = 5.0
+    close = row.get("close")
+    rsi = row.get("rsi")
+    macd_hist = row.get("macd_hist")
+    sma20 = row.get("ema_short")
+    sma50 = row.get("sma_50")
+    sma200 = row.get("sma_200")
+
+    if not pd.isna(rsi):
+        if 30 <= rsi <= 60:
+            score += 1.5
+        elif rsi < 30:
+            score += 2.0
+        else:
+            score -= 1.0
+    if not pd.isna(macd_hist):
+        if macd_hist > 0:
+            score += 1.5
+        else:
+            score -= 0.5
+    if not pd.isna(close) and not pd.isna(sma200):
+        if close > sma200:
+            score += 1.5
+        else:
+            score -= 0.5
+    if not pd.isna(close) and not pd.isna(sma20):
+        if close > sma20:
+            score += 1.0
+        else:
+            score -= 0.5
+    if not pd.isna(sma50) and not pd.isna(sma200) and sma50 > sma200:
+        score += 1.0
+    return max(0, min(10, score))
+
+
+def detect_entry_opportunity(data: dict, min_score: float = 7.0) -> List[Dict]:
+    """Lọc các cổ phiếu có điểm vào lệnh >= min_score.
+
+    Args:
+        data: Dict {symbol: DataFrame} chứa dữ liệu đã tính chỉ báo.
+        min_score: Điểm tối thiểu để được chọn (mặc định 7.0).
+
+    Returns:
+        List dict: symbol, entry_score, price, reason.
+    """
+    results = []
+    for symbol, df in data.items():
+        if df.empty:
+            continue
+        curr = df.iloc[-1]
+        es = _compute_entry_score(curr)
+        if es >= min_score:
+            reasons = []
+            rsi = curr.get("rsi")
+            if not pd.isna(rsi):
+                if rsi < 30:
+                    reasons.append(f"RSI oversold ({rsi:.1f})")
+                elif rsi < 40:
+                    reasons.append(f"RSI thấp ({rsi:.1f})")
+            sma200 = curr.get("sma_200")
+            if not pd.isna(sma200) and not pd.isna(curr.get("close")) and curr["close"] > sma200:
+                reasons.append("Uptrend SMA200")
+            sma50 = curr.get("sma_50")
+            if not pd.isna(sma50) and not pd.isna(sma200) and sma50 > sma200:
+                reasons.append("Golden Cross")
+            if not pd.isna(curr.get("macd_hist")) and curr["macd_hist"] > 0:
+                reasons.append("MACD dương")
+            results.append({
+                "symbol": symbol,
+                "type": "entry_opportunity",
+                "price": round(curr["close"], 2),
+                "entry_score": round(es, 1),
+                "reason": " + ".join(reasons) if reasons else "Nhiều yếu tố tích cực",
+            })
+    results.sort(key=lambda x: x["entry_score"], reverse=True)
+    return results

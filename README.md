@@ -91,6 +91,7 @@ py vn-stock-bot/main.py
   • Target 2 (3xATR): 169.34đ
   • Fib 0.382: 148.85đ
   • Fib 0.618: 147.15đ
+  • Fib 1.0 (SMA200): 115.20đ
 
 🟡 KHUYẾN NGHỊ: THEO DÕI
 ```
@@ -122,7 +123,7 @@ MIN_RR_RATIO = 2.0              # tỷ lệ risk:reward tối thiểu
 | `config.py` | Cấu hình: Telegram, watchlist, ngưỡng kỹ thuật |
 | `data_fetcher.py` | Lấy dữ liệu OHLCV từ vnstock API (VCI source) |
 | `indicators.py` | Tính chỉ báo: EMA, SMA, RSI, MACD, ATR, BB (thuần pandas) |
-| `signals.py` | Logic phát hiện entry, stop-loss, take-profit, potential, downtrend |
+| `signals.py` | Logic phát hiện entry, take-profit, potential, downtrend |
 | `telegram_notify.py` | Gửi Telegram + format báo cáo phân tích chi tiết |
 | `main.py` | AsyncIOScheduler: 4 job theo cron |
 | `.github/workflows/scan-daily.yml` | GitHub Actions: chạy bot hàng ngày 8:30 AM VN |

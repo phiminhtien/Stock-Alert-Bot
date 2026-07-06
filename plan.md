@@ -72,7 +72,6 @@ Tính trên DataFrame OHLCV bằng pandas thuần (EWM, rolling):
 
 ### 5.4 `signals.py`
 - **Entry**: EMA20 cắt lên EMA50 + volume spike (>1.5x MA20); RSI hồi từ oversold
-- **Stop-loss**: price − ATR × factor (mặc định 1.5)
 - **Take-profit**: trail theo EMA20 nếu giá đã chạy 5%+
 - **Potential**: giá > SMA50 & SMA200 + RSI < 40 + volume spike (cần ≥ 2/3)
 - **Downtrend**: giá < SMA50 & SMA200 + MACD âm 5 phiên + RSI < 40
@@ -84,7 +83,7 @@ Tính trên DataFrame OHLCV bằng pandas thuần (EWM, rolling):
   - Điểm vào lệnh (0-10) + điểm chốt lời (0-10)
   - RSI, MACD, xu hướng (SMA200), Golden/Death cross
   - Hỗ trợ/kháng cự (BB lower/upper)
-  - Chiến lược: SL, TP1/TP2 (ATR), Fibonacci
+  - Chiến lược: SL, TP1/TP2 (ATR), Fibonacci (dựa trên SMA200)
   - Khuyến nghị (MUA / THEO DÕI / KHÔNG NÊN MUA)
 
 ### 5.6 `main.py`
@@ -119,3 +118,5 @@ GitHub Secrets cần cấu hình: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `STO
 - Chỉ báo kỹ thuật có độ trễ và nhiễu cao, đặc biệt mã thanh khoản thấp
 - Bot hỗ trợ ra quyết định, không tự động đặt lệnh
 - Rate limit vnstock API và Telegram (~30 msg/s)
+- Điểm số không bị phạt khi thiếu dữ liệu (chỉ tính trên giá trị có sẵn)
+- Fibonacci dựa trên SMA200 (không dùng range 2 ngày)
