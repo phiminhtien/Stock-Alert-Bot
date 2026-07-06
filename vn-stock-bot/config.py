@@ -6,14 +6,7 @@ load_dotenv()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
-WATCHLIST = [
-    "PLX",
-    "BSR",
-    "VIC",
-    "MBB",
-    "HPG",
-    "SSI",
-]
+WATCHLIST = os.getenv("STOCK_CODES", "").split(",")
 
 TIMEZONE = "Asia/Ho_Chi_Minh"
 
