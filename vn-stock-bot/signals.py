@@ -125,7 +125,7 @@ def detect_take_profit(df: pd.DataFrame, symbol: str) -> List[Dict]:
         return signals
 
     curr = df.iloc[-1]
-    if _ema_cross_up(curr) and curr["close"] > df.iloc[-3]["close"] * 1.05:
+    if _ema_cross_up(curr) and len(df) >= 3 and curr["close"] > df.iloc[-3]["close"] * 1.05:
         signals.append({
             "symbol": symbol,
             "type": "take_profit",
@@ -236,43 +236,61 @@ def scan_all(data: dict) -> List[Dict]:
 
 
 def _compute_entry_score(row) -> float:
-    """Tính điểm vào lệnh từ chỉ báo hiện tại (thang 0-10)."""
-    score = 5.0
+    """Tính điểm vào lệnh từ chỉ báo (0-10).
+
+    Weight: trend > pullback > cross > momentum > RSI.
+    """
+    score = 0.0
     close = row.get("close")
     rsi = row.get("rsi")
     macd_hist = row.get("macd_hist")
-    sma20 = row.get("ema_short")
+    ema20 = row.get("ema_short")
+    ema50 = row.get("ema_long")
     sma50 = row.get("sma_50")
     sma200 = row.get("sma_200")
 
-    if not pd.isna(rsi):
-        if 30 <= rsi <= 60:
-            score += 1.5
-        elif rsi < 30:
-            score += 2.0
-        else:
-            score -= 1.0
-    if not pd.isna(macd_hist):
-        if macd_hist > 0:
-            score += 1.5
-        else:
-            score -= 0.5
-    if not pd.isna(close) and not pd.isna(sma200):
+    has_trend = not pd.isna(close) and not pd.isna(sma200)
+    has_indicators = not pd.isna(rsi) and not pd.isna(macd_hist)
+
+    if has_trend and has_indicators:
+        # 1. Trend: ±3
         if close > sma200:
-            score += 1.5
+            score += 3.0
         else:
-            score -= 0.5
-    if not pd.isna(close) and not pd.isna(sma20):
-        if close > sma20:
-            score += 1.0
-        else:
-            score -= 0.5
-    if not pd.isna(sma50) and not pd.isna(sma200) and sma50 > sma200:
-        score += 1.0
+            score -= 2.0
+
+        # 2. Pullback discount trong uptrend
+        if close > sma200:
+            if not pd.isna(ema20) and close < ema20:
+                score += 2.0
+            elif not pd.isna(ema20):
+                score += 0.5
+
+        # 3. Cross: ±1
+        if not pd.isna(sma50) and not pd.isna(sma200):
+            if sma50 > sma200:
+                score += 1.0
+            else:
+                score -= 1.0
+
+        # 4. MACD momentum: +1/-0.5
+        if not pd.isna(macd_hist):
+            if macd_hist > 0:
+                score += 1.0
+            else:
+                score -= 0.5
+
+        # 5. RSI sweet spot: +1/-1
+        if not pd.isna(rsi):
+            if 40 <= rsi <= 55:
+                score += 1.0
+            elif rsi > 70 or rsi < 20:
+                score -= 1.0
+
     return max(0, min(10, score))
 
 
-def detect_entry_opportunity(data: dict, min_score: float = 7.0) -> List[Dict]:
+def detect_entry_opportunity(data: dict, min_score: float = 6.0) -> List[Dict]:
     """Lọc các cổ phiếu có điểm vào lệnh >= min_score.
 
     Args:

@@ -213,14 +213,15 @@ def format_stock_analysis(symbol: str, df: pd.DataFrame) -> str:
     pre = df.iloc[-2]
 
     change_pct = ((cur["close"] - pre["close"]) / pre["close"]) * 100
-    day_low = min(cur["low"], pre["low"])
-    day_high = max(cur["high"], pre["high"])
+    day_low = cur["low"]
+    day_high = cur["high"]
     close = cur["close"]
 
     rsi = cur.get("rsi")
     macd_hist = cur.get("macd_hist")
     atr = cur.get("atr")
     sma20 = cur.get("ema_short")
+    ema50 = cur.get("ema_long")
     sma50 = cur.get("sma_50")
     sma200 = cur.get("sma_200")
     bb_mid = cur.get("bb_middle")
@@ -244,7 +245,7 @@ def format_stock_analysis(symbol: str, df: pd.DataFrame) -> str:
 
     sma20_str = ""
     if not pd.isna(sma20) and not pd.isna(close):
-        sma20_str = f"Giá {'>' if close > sma20 else '<'} SMA20 ({_fmt(sma20)})"
+        sma20_str = f"Giá {'>' if close > sma20 else '<'} EMA20 ({_fmt(sma20)})"
 
     cross_str = ""
     if not pd.isna(sma50) and not pd.isna(sma200):
@@ -253,56 +254,106 @@ def format_stock_analysis(symbol: str, df: pd.DataFrame) -> str:
         else:
             cross_str = "Death Cross: SMA50 < SMA200"
 
-    entry_score = 5.0
-    if not pd.isna(rsi):
-        if 30 <= rsi <= 60:
-            entry_score += 1.5
-        elif rsi < 30:
-            entry_score += 2.0
-        else:
-            entry_score -= 1.0
-    if not pd.isna(macd_hist):
-        if macd_hist > 0:
-            entry_score += 1.5
-        else:
-            entry_score -= 0.5
-    if not pd.isna(close) and not pd.isna(sma200):
+    # ============== ENTRY SCORE (0-10) ==============
+    entry_score = 0.0
+
+    has_trend = not pd.isna(close) and not pd.isna(sma200)
+    has_indicators = not pd.isna(rsi) and not pd.isna(macd_hist)
+
+    if has_trend and has_indicators:
+        # 1. Trend dài hạn (quan trọng nhất)
         if close > sma200:
-            entry_score += 1.5
+            entry_score += 3.0
         else:
-            entry_score -= 0.5
-    if not pd.isna(close) and not pd.isna(sma20):
-        if close > sma20:
-            entry_score += 1.0
-        else:
-            entry_score -= 0.5
-    if not pd.isna(sma50) and not pd.isna(sma200) and sma50 > sma200:
-        entry_score += 1.0
+            entry_score -= 2.0
+
+        # 2. Pullback discount: trong uptrend, giá < EMA20 = entry đẹp
+        if close > sma200:
+            if not pd.isna(sma20) and close < sma20:
+                entry_score += 2.0
+            elif not pd.isna(sma20):
+                entry_score += 0.5
+
+        # 3. Cross SMA50/SMA200
+        if not pd.isna(sma50) and not pd.isna(sma200):
+            if sma50 > sma200:
+                entry_score += 1.0
+            else:
+                entry_score -= 1.0
+
+        # 4. MACD momentum
+        if not pd.isna(macd_hist):
+            if macd_hist > 0:
+                entry_score += 1.0
+            else:
+                entry_score -= 0.5
+
+        # 5. RSI sweet spot
+        if not pd.isna(rsi):
+            if 40 <= rsi <= 55:
+                entry_score += 1.0
+            elif rsi > 70 or rsi < 20:
+                entry_score -= 1.0
+
     entry_score = max(0, min(10, entry_score))
-
-    tp_score = 5.0
-    bb_mid_str = ""
-    if not pd.isna(close) and not pd.isna(bb_mid):
-        if close < bb_mid:
-            tp_score += 2.0
-            bb_mid_str = "Giá dưới BB Mid - Tiềm năng"
-        elif close > bb_mid:
-            tp_score -= 0.5
-            bb_mid_str = "Giá trên BB Mid"
-        if not pd.isna(bb_lower) and close <= bb_lower * 1.02:
-            tp_score += 1.0
-    if not pd.isna(rsi) and rsi > 60:
-        tp_score -= 1.0
-    tp_score = max(0, min(10, tp_score))
-
+    entry_str = f"{entry_score:.1f}/10"
     entry_icon = "✅" if entry_score >= 6 else "⏳" if entry_score >= 4 else "❌"
-    tp_icon = "✅" if tp_score >= 6 else "⚪" if tp_score >= 4 else "🔴"
+
+    # ============== RISK SCORE (0-10) ==============
+    risk_score = 5.0
+    rr1 = 0.0
+    sl_pct = 0.0
 
     atr_val = atr if not pd.isna(atr) else 0
+    if atr_val > 0 and close > 0:
+        sl_pct = (atr_val * 1.5 / close) * 100
+        risk_amt = atr_val * 1.5
+        tp1_profit = atr_val * 2
+        tp2_profit = atr_val * 3
+        rr1 = tp1_profit / risk_amt if risk_amt > 0 else 0
+        rr2 = tp2_profit / risk_amt if risk_amt > 0 else 0
+
+        # SL distance
+        if sl_pct <= 2.0:
+            risk_score += 2.0
+        elif sl_pct <= 3.5:
+            risk_score += 1.5
+        elif sl_pct <= 5.0:
+            risk_score += 0.5
+        else:
+            risk_score -= 1.0
+
+        # R:R ratio
+        if rr1 >= 2.0:
+            risk_score += 2.0
+        elif rr1 >= 1.5:
+            risk_score += 1.0
+        else:
+            risk_score -= 1.0
+
+        # Volatility
+        atr_pct = (atr_val / close) * 100
+        if 1.0 <= atr_pct <= 4.0:
+            risk_score += 1.0
+        elif atr_pct > 7.0:
+            risk_score -= 1.0
+
+        # BB position
+        if not pd.isna(close) and not pd.isna(bb_mid):
+            if close < bb_mid:
+                risk_score += 0.5
+            if not pd.isna(bb_lower) and close <= bb_lower * 1.03:
+                risk_score += 0.5
+
+    risk_score = max(0, min(10, risk_score))
+    risk_icon = "✅" if risk_score >= 6 else "⚪" if risk_score >= 4 else "🔴"
+
+    # ============== KHOẢNG CHỐT LỜI ==============
     sl = close - atr_val * 1.5 if close > 0 else 0
     tp1 = close + atr_val * 2
     tp2 = close + atr_val * 3
 
+    # ============== FIBONACCI ==============
     if not pd.isna(sma200):
         if close > sma200:
             fib_382 = close - (close - sma200) * 0.382
@@ -315,17 +366,35 @@ def format_stock_analysis(symbol: str, df: pd.DataFrame) -> str:
     else:
         fib_382 = fib_618 = fib_100 = 0
 
+    # ============== SUPPORT/RESISTANCE ==============
     support = bb_lower if not pd.isna(bb_lower) else day_low
     resistance = cur.get("bb_upper", day_high)
 
+    # ============== RECOMMENDATION ==============
     rec = "CHƯA NÊN MUA"
     rec_icon = "🔴"
-    if entry_score >= 6 and tp_score >= 5:
+    if entry_score >= 7 and risk_score >= 6:
+        rec = "CÓ THỂ MUA"
+        rec_icon = "🟢"
+    elif entry_score >= 6 and risk_score >= 5:
         rec = "CÓ THỂ MUA"
         rec_icon = "🟢"
     elif entry_score >= 5:
         rec = "THEO DÕI"
         rec_icon = "🟡"
+    elif entry_score >= 4:
+        rec = "THEO DÕI"
+        rec_icon = "🟡"
+
+    # ============== FORMAT CHUỖI PHẦN TỬ PHỤ ==============
+    _bb_mid_str = ""
+    if not pd.isna(close) and not pd.isna(bb_mid):
+        if close < bb_mid:
+            _bb_mid_str = "Giá dưới BB Mid"
+            if not pd.isna(bb_lower) and close <= bb_lower * 1.03:
+                _bb_mid_str += " - Sát BB Lower"
+        else:
+            _bb_mid_str = "Giá trên BB Mid"
 
     vol_str = f"{cur['volume']:,.0f}".replace(",", ".")
 
@@ -339,7 +408,7 @@ def format_stock_analysis(symbol: str, df: pd.DataFrame) -> str:
         "",
         "━" * 35,
         "",
-        f"🎯 *ĐIỂM VÀO LỆNH:* {entry_score:.1f}/10 {entry_icon}",
+        f"🎯 *ĐIỂM VÀO LỆNH:* {entry_str} {entry_icon}",
     ]
 
     if has_data:
@@ -352,11 +421,12 @@ def format_stock_analysis(symbol: str, df: pd.DataFrame) -> str:
             lines.append(f"  • {cross_str}")
 
     lines.append("")
-    lines.append(f"💰 *ĐIỂM CHỐT LỜI:* {tp_score:.1f}/10 {tp_icon}")
-    if atr_val > 0:
+    lines.append(f"💰 *ĐIỂM RỦI RO:* {risk_score:.1f}/10 {risk_icon}")
+    if atr_val > 0 and close > 0:
         lines.append(f"  • Khoảng chốt lời: {_fmt(tp1)}đ - {_fmt(tp2)}đ")
-    if bb_mid_str:
-        lines.append(f"  • {bb_mid_str}")
+        lines.append(f"  • R:R = {rr1:.1f} | SL: {sl_pct:.1f}%")
+    if _bb_mid_str:
+        lines.append(f"  • {_bb_mid_str}")
     if not pd.isna(rsi):
         lines.append(f"  • RSI {'vùng quá mua' if rsi > 60 else 'vùng an toàn' if rsi < 40 else 'trung tính'}")
 
@@ -372,8 +442,8 @@ def format_stock_analysis(symbol: str, df: pd.DataFrame) -> str:
 
     lines.append(f"📌 *CHIẾN LƯỢC GIAO DỊCH*")
     if close > 0:
-        lines.append(f"  • Cắt lỗ: {_fmt(sl)}đ")
-        lines.append(f"  • Target 1 (2xATR): {_fmt(tp1)}đ")
+        lines.append(f"  • Cắt lỗ: {_fmt(sl)}đ ({sl_pct:.1f}%)")
+        lines.append(f"  • Target 1 (2xATR): {_fmt(tp1)}đ (RR {rr1:.1f})")
         lines.append(f"  • Target 2 (3xATR): {_fmt(tp2)}đ")
     if not pd.isna(sma200) and sma200 > 0:
         lines.append(f"  • Fib 0.382: {_fmt(fib_382)}đ")
@@ -382,15 +452,142 @@ def format_stock_analysis(symbol: str, df: pd.DataFrame) -> str:
     if not pd.isna(rsi):
         lines.append(f"  • RSI: {_fmt(rsi)}")
     if not pd.isna(atr):
-        lines.append(f"  • ATR: {_fmt(atr)}")
+        atr_pct = (atr_val / close) * 100 if close > 0 else 0
+        lines.append(f"  • ATR: {_fmt(atr)} ({atr_pct:.1f}%)")
 
     lines.append("")
     lines.append(f"{rec_icon} *KHUYẾN NGHỊ:* {rec}")
+    lines.append("")
+
+    # === THỜI GIAN NẮM GIỮ ===
+    timeframes = _timeframe_recommendation(cur)
+    lines.append("⏳ *THỜI GIAN NẮM GIỮ*")
+    for name, verdict, reason in timeframes:
+        lines.append(f"  {verdict}")
+        if reason:
+            lines.append(f"    └ {reason}")
+
     lines.append("=" * 35)
     return "\n".join(lines)
 
 
-def format_session_report(data: dict, signals: list) -> str:
+def _timeframe_recommendation(cur: pd.Series) -> list:
+    """Đánh giá khuyến nghị theo 3 khung thời gian: T+, ngắn hạn, dài hạn.
+
+    Returns:
+        List [tplus_rec, short_rec, long_rec] với tuple (label, icon, reason).
+    """
+    close = cur.get("close")
+    rsi = cur.get("rsi")
+    macd_hist = cur.get("macd_hist")
+    ema20 = cur.get("ema_short")
+    ema50 = cur.get("ema_long")
+    sma50 = cur.get("sma_50")
+    sma200 = cur.get("sma_200")
+    bb_mid = cur.get("bb_middle")
+    bb_lower = cur.get("bb_lower")
+
+    # ---- T+ (1-3 ngày): momentum ngắn hạn ----
+    tplus_score = 0
+    tplus_reasons = []
+
+    if not pd.isna(close) and not pd.isna(ema20):
+        if close > ema20:
+            tplus_score += 1
+            tplus_reasons.append("Giá trên EMA20")
+        else:
+            tplus_score -= 1
+    if not pd.isna(macd_hist) and macd_hist > 0:
+        tplus_score += 1
+        tplus_reasons.append("MACD dương")
+    if not pd.isna(rsi):
+        if 30 <= rsi <= 65:
+            tplus_score += 1
+            tplus_reasons.append("RSI hợp lý")
+        elif rsi > 75:
+            tplus_score -= 1
+            tplus_reasons.append("RSI quá mua")
+    if not pd.isna(close) and not pd.isna(bb_lower):
+        if close <= bb_lower * 1.03:
+            tplus_score += 1
+            tplus_reasons.append("Sát BB Lower")
+
+    if tplus_score >= 2:
+        tplus = ("🟢 CÓ THỂ PLAY", " ".join(tplus_reasons[:2]))
+    elif tplus_score >= 1:
+        tplus = ("🟡 ĐỢI XÁC NHẬN", " ".join(tplus_reasons[:2]))
+    else:
+        tplus = ("🔴 KHÔNG PLAY", " ".join(tplus_reasons[:2]) if tplus_reasons else "Momentum yếu")
+
+    # ---- Ngắn hạn (1-2 tuần): trend trung hạn ----
+    short_score = 0
+    short_reasons = []
+
+    if not pd.isna(close) and not pd.isna(ema50):
+        if close > ema50:
+            short_score += 1
+            short_reasons.append("Giá trên EMA50")
+        else:
+            short_score -= 1
+    if not pd.isna(sma50) and not pd.isna(sma200):
+        if sma50 > sma200:
+            short_score += 1
+            short_reasons.append("Golden Cross")
+        else:
+            short_score -= 1
+            short_reasons.append("Death Cross")
+    if not pd.isna(close) and not pd.isna(bb_mid):
+        if close < bb_mid:
+            short_score += 1
+            short_reasons.append("Dưới BB Mid")
+        else:
+            short_reasons.append("Trên BB Mid")
+    if not pd.isna(rsi) and 40 <= rsi <= 65:
+        short_score += 1
+        short_reasons.append("RSI ổn định")
+
+    if short_score >= 3:
+        short = ("🟢 NÊN MUA", " ".join(short_reasons[:2]))
+    elif short_score >= 1:
+        short = ("🟡 THEO DÕI", " ".join(short_reasons[:2]))
+    else:
+        short = ("🔴 KHÔNG NÊN", " ".join(short_reasons[:2]) if short_reasons else "Xu hướng yếu")
+
+    # ---- Dài hạn (1-3 tháng): trend dài hạn ----
+    long_score = 0
+    long_reasons = []
+
+    if not pd.isna(close) and not pd.isna(sma200):
+        if close > sma200:
+            long_score += 2
+            long_reasons.append("Uptrend SMA200")
+        else:
+            long_score -= 2
+            long_reasons.append("Downtrend SMA200")
+    if not pd.isna(sma50) and not pd.isna(sma200):
+        if sma50 > sma200:
+            long_score += 1
+            long_reasons.append("SMA50 > SMA200")
+        else:
+            long_score -= 1
+    if not pd.isna(rsi) and not pd.isna(sma200):
+        if 45 <= rsi <= 70 and not pd.isna(close) and close > sma200:
+            long_score += 1
+            long_reasons.append("RSI mạnh trong uptrend")
+        elif rsi < 35 and not pd.isna(close) and close > sma200:
+            long_score += 1
+            long_reasons.append("RSI thấp + uptrend = pullback")
+
+    if long_score >= 3:
+        long = ("🟢 NÊN GIỮ/MUA", " ".join(long_reasons[:2]))
+    elif long_score >= 1:
+        long = ("🟡 GIỮ XEM", " ".join(long_reasons[:2]))
+    else:
+        long = ("🔴 KHÔNG MUA DÀI", " ".join(long_reasons[:2]) if long_reasons else "Xu hướng dài hạn yếu")
+
+    return [("T+ (1-3 ngày)", tplus[0], tplus[1]),
+            ("Ngắn hạn (1-2 tuần)", short[0], short[1]),
+            ("Dài hạn (1-3 tháng)", long[0], long[1])]
     """Định dạng báo cáo giữa phiên.
 
     Gộp phân tích top 5 mã biến động mạnh nhất + danh sách tín hiệu mới.

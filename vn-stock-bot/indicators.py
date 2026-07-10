@@ -105,6 +105,8 @@ def _macd(close: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9):
 def _bollinger_bands(close: pd.Series, length: int = 20, std_dev: int = 2):
     """Tính Bollinger Bands (upper, middle, lower).
 
+    Dùng ddof=0 (population std) theo chuẩn John Bollinger.
+
     Args:
         close: Chuỗi giá đóng cửa.
         length: Số phiên tính SMA cho middle band (mặc định 20).
@@ -114,7 +116,7 @@ def _bollinger_bands(close: pd.Series, length: int = 20, std_dev: int = 2):
         Tuple (upper, mid, lower) — mỗi phần là Series.
     """
     mid = _sma(close, length)
-    std = close.rolling(window=length).std()
+    std = close.rolling(window=length).std(ddof=0)
     upper = mid + std_dev * std
     lower = mid - std_dev * std
     return upper, mid, lower

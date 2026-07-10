@@ -17,7 +17,7 @@ WATCHLIST = os.getenv("STOCK_CODES", "").split(",")
 
 # ── Thời gian ─────────────────────────────────────────────
 TIMEZONE = "Asia/Ho_Chi_Minh"
-NOTIFY_INTERVAL_MINUTES = 15
+NOTIFY_INTERVAL_MINUTES = int(os.getenv("NOTIFY_INTERVAL_MINUTES", 15))
 
 # ── Chỉ báo kỹ thuật ─────────────────────────────────────
 RSI_OVERSOLD = 30
