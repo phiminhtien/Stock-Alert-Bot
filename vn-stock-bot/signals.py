@@ -295,7 +295,7 @@ def detect_entry_opportunity(data: dict, min_score: float = 6.0) -> List[Dict]:
 
     Args:
         data: Dict {symbol: DataFrame} chứa dữ liệu đã tính chỉ báo.
-        min_score: Điểm tối thiểu để được chọn (mặc định 7.0).
+        min_score: Điểm tối thiểu để được chọn (mặc định 6.0).
 
     Returns:
         List dict: symbol, entry_score, price, reason.

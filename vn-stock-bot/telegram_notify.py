@@ -588,6 +588,9 @@ def _timeframe_recommendation(cur: pd.Series) -> list:
     return [("T+ (1-3 ngày)", tplus[0], tplus[1]),
             ("Ngắn hạn (1-2 tuần)", short[0], short[1]),
             ("Dài hạn (1-3 tháng)", long[0], long[1])]
+
+
+def format_session_report(data: dict, signals: list) -> str:
     """Định dạng báo cáo giữa phiên.
 
     Gộp phân tích top 5 mã biến động mạnh nhất + danh sách tín hiệu mới.
