@@ -47,7 +47,7 @@ def _is_downtrend(row: pd.Series) -> bool:
 
 def _macd_bearish(df: pd.DataFrame) -> bool:
     """Kiểm tra MACD histogram âm liên tiếp 5 phiên."""
-    if "macd_hist" not in df.columns:
+    if "macd_hist" not in df.columns or len(df) < 5:
         return False
     recent = df.tail(5)
     return (recent["macd_hist"] < 0).all()
@@ -115,23 +115,48 @@ def detect_entry(df: pd.DataFrame, symbol: str) -> List[Dict]:
 def detect_take_profit(df: pd.DataFrame, symbol: str) -> List[Dict]:
     """Phát hiện tín hiệu chốt lời.
 
-    Trail theo EMA20 nếu giá đã tăng hơn 5% so với 2 phiên trước.
+    Phát hiện khi:
+    1. Giá cắt xuống đệm hỗ trợ EMA20 sau khi đã tăng > 5% trong 5 phiên.
+    2. RSI vào vùng quá mua (> 70) và bắt đầu quay đầu giảm.
 
     Returns:
         Mỗi tín hiệu gồm: symbol, type="take_profit", price, reason.
     """
     signals = []
-    if len(df) < 2:
+    if len(df) < 3:
         return signals
 
     curr = df.iloc[-1]
-    if _ema_cross_up(curr) and len(df) >= 3 and curr["close"] > df.iloc[-3]["close"] * 1.05:
+    prev = df.iloc[-2]
+
+    # Điều kiện 1: Giá gãy đệm hỗ trợ EMA20 sau đợt tăng
+    if (
+        not pd.isna(prev.get("ema_short"))
+        and prev["close"] >= prev["ema_short"]
+        and curr["close"] < curr["ema_short"]
+        and len(df) >= 5
+        and curr["close"] > df.iloc[-5]["close"] * 1.05
+    ):
         signals.append({
             "symbol": symbol,
             "type": "take_profit",
             "price": round(curr["close"], 2),
-            "reason": "Giá đã chạy có lời, trail theo EMA20",
+            "reason": "Giá gãy đệm hỗ trợ EMA20 sau đợt tăng >5%",
         })
+    # Điều kiện 2: RSI quá mua > 70 có dấu hiệu chốt lời quay đầu
+    elif (
+        not pd.isna(prev.get("rsi"))
+        and not pd.isna(curr.get("rsi"))
+        and prev["rsi"] >= 70
+        and curr["rsi"] < prev["rsi"]
+    ):
+        signals.append({
+            "symbol": symbol,
+            "type": "take_profit",
+            "price": round(curr["close"], 2),
+            "reason": f"RSI quá mua ({prev['rsi']:.1f}) có dấu hiệu đảo chiều",
+        })
+
     return signals
 
 
@@ -235,59 +260,73 @@ def scan_all(data: dict) -> List[Dict]:
     return all_signals
 
 
-def _compute_entry_score(row) -> float:
-    """Tính điểm vào lệnh từ chỉ báo (0-10).
+def _compute_entry_score(row: pd.Series) -> float:
+    """Tính điểm vào lệnh dựa trên 5 trụ cột phân tích kỹ thuật (thang 0-10).
 
-    Weight: trend > pullback > cross > momentum > RSI.
+    Trụ cột:
+    1. Xu hướng dài hạn (Trend): max 3.0đ
+    2. Vùng giá mua / Pullback hỗ trợ: max 2.0đ
+    3. Động lực MACD (Momentum): max 1.5đ
+    4. Chỉ số RSI hợp lý: max 1.5đ
+    5. Xác nhận Khối lượng (Volume): max 2.0đ
     """
+    if row is None or row.empty:
+        return 0.0
+
     score = 0.0
     close = row.get("close")
     rsi = row.get("rsi")
     macd_hist = row.get("macd_hist")
+    macd = row.get("macd")
+    macd_signal = row.get("macd_signal")
     ema20 = row.get("ema_short")
-    ema50 = row.get("ema_long")
     sma50 = row.get("sma_50")
     sma200 = row.get("sma_200")
+    vol = row.get("volume", 0)
+    vol_ma = row.get("volume_ma", 0)
+    bb_lower = row.get("bb_lower")
 
-    has_trend = not pd.isna(close) and not pd.isna(sma200)
-    has_indicators = not pd.isna(rsi) and not pd.isna(macd_hist)
-
-    if has_trend and has_indicators:
-        # 1. Trend: ±3
+    # Trụ cột 1: Xu hướng dài hạn (Trend) - max 3.0đ
+    if not pd.isna(close) and not pd.isna(sma200):
         if close > sma200:
-            score += 3.0
-        else:
-            score -= 2.0
+            score += 2.0
+        if not pd.isna(sma50) and sma50 > sma200:
+            score += 1.0  # Golden Cross
 
-        # 2. Pullback discount trong uptrend
-        if close > sma200:
-            if not pd.isna(ema20) and close < ema20:
-                score += 2.0
-            elif not pd.isna(ema20):
-                score += 0.5
+    # Trụ cột 2: Vùng giá mua / Pullback hỗ trợ - max 2.0đ
+    if not pd.isna(close) and not pd.isna(sma200) and close > sma200:
+        if not pd.isna(ema20) and close <= ema20 * 1.01:
+            score += 1.5
+        elif not pd.isna(sma50) and close <= sma50 * 1.01:
+            score += 1.5
+        if not pd.isna(bb_lower) and close <= bb_lower * 1.03:
+            score += 0.5
 
-        # 3. Cross: ±1
-        if not pd.isna(sma50) and not pd.isna(sma200):
-            if sma50 > sma200:
-                score += 1.0
-            else:
-                score -= 1.0
+    # Trụ cột 3: Động lực MACD - max 1.5đ
+    if not pd.isna(macd_hist):
+        if macd_hist > 0:
+            score += 1.0
+        if not pd.isna(macd) and not pd.isna(macd_signal) and macd > macd_signal:
+            score += 0.5
 
-        # 4. MACD momentum: +1/-0.5
-        if not pd.isna(macd_hist):
-            if macd_hist > 0:
-                score += 1.0
-            else:
-                score -= 0.5
+    # Trụ cột 4: Vùng chỉ số RSI hợp lý - max 1.5đ
+    if not pd.isna(rsi):
+        if 40 <= rsi <= 60:
+            score += 1.5
+        elif rsi < 35:
+            score += 1.0  # Vùng oversold tích lũy
+        elif rsi > 70:
+            score -= 1.0  # Rủi ro overbought
 
-        # 5. RSI sweet spot: +1/-1
-        if not pd.isna(rsi):
-            if 40 <= rsi <= 55:
-                score += 1.0
-            elif rsi > 70 or rsi < 20:
-                score -= 1.0
+    # Trụ cột 5: Xác nhận Khối lượng (Volume) - max 2.0đ
+    if not pd.isna(vol_ma) and vol_ma > 0 and not pd.isna(vol) and vol > 0:
+        vol_ratio = vol / vol_ma
+        if vol_ratio >= 1.5:
+            score += 2.0
+        elif vol_ratio >= 1.2:
+            score += 1.0
 
-    return max(0, min(10, score))
+    return round(max(0.0, min(10.0, score)), 1)
 
 
 def detect_entry_opportunity(data: dict, min_score: float = 6.0) -> List[Dict]:
@@ -322,12 +361,18 @@ def detect_entry_opportunity(data: dict, min_score: float = 6.0) -> List[Dict]:
                 reasons.append("Golden Cross")
             if not pd.isna(curr.get("macd_hist")) and curr["macd_hist"] > 0:
                 reasons.append("MACD dương")
+            vol = curr.get("volume", 0)
+            vol_ma = curr.get("volume_ma", 0)
+            if not pd.isna(vol_ma) and vol_ma > 0 and vol >= vol_ma * 1.2:
+                reasons.append("Volume tăng")
+
             results.append({
                 "symbol": symbol,
                 "type": "entry_opportunity",
                 "price": round(curr["close"], 2),
-                "entry_score": round(es, 1),
+                "entry_score": es,
                 "reason": " + ".join(reasons) if reasons else "Nhiều yếu tố tích cực",
             })
     results.sort(key=lambda x: x["entry_score"], reverse=True)
     return results
+

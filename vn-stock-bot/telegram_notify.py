@@ -9,8 +9,10 @@ from telegram import Bot
 from telegram.constants import ParseMode
 
 from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+from signals import _compute_entry_score
 
 logger = logging.getLogger(__name__)
+
 
 _bot: Bot | None = None
 
@@ -255,49 +257,9 @@ def format_stock_analysis(symbol: str, df: pd.DataFrame) -> str:
             cross_str = "Death Cross: SMA50 < SMA200"
 
     # ============== ENTRY SCORE (0-10) ==============
-    entry_score = 0.0
-
-    has_trend = not pd.isna(close) and not pd.isna(sma200)
-    has_indicators = not pd.isna(rsi) and not pd.isna(macd_hist)
-
-    if has_trend and has_indicators:
-        # 1. Trend dài hạn (quan trọng nhất)
-        if close > sma200:
-            entry_score += 3.0
-        else:
-            entry_score -= 2.0
-
-        # 2. Pullback discount: trong uptrend, giá < EMA20 = entry đẹp
-        if close > sma200:
-            if not pd.isna(sma20) and close < sma20:
-                entry_score += 2.0
-            elif not pd.isna(sma20):
-                entry_score += 0.5
-
-        # 3. Cross SMA50/SMA200
-        if not pd.isna(sma50) and not pd.isna(sma200):
-            if sma50 > sma200:
-                entry_score += 1.0
-            else:
-                entry_score -= 1.0
-
-        # 4. MACD momentum
-        if not pd.isna(macd_hist):
-            if macd_hist > 0:
-                entry_score += 1.0
-            else:
-                entry_score -= 0.5
-
-        # 5. RSI sweet spot
-        if not pd.isna(rsi):
-            if 40 <= rsi <= 55:
-                entry_score += 1.0
-            elif rsi > 70 or rsi < 20:
-                entry_score -= 1.0
-
-    entry_score = max(0, min(10, entry_score))
+    entry_score = _compute_entry_score(cur)
     entry_str = f"{entry_score:.1f}/10"
-    entry_icon = "✅" if entry_score >= 6 else "⏳" if entry_score >= 4 else "❌"
+    entry_icon = "✅" if entry_score >= 6.0 else "⏳" if entry_score >= 4.0 else "❌"
 
     # ============== RISK SCORE (0-10) ==============
     risk_score = 5.0
@@ -353,22 +315,28 @@ def format_stock_analysis(symbol: str, df: pd.DataFrame) -> str:
     tp1 = close + atr_val * 2
     tp2 = close + atr_val * 3
 
-    # ============== FIBONACCI ==============
-    if not pd.isna(sma200):
-        if close > sma200:
-            fib_382 = close - (close - sma200) * 0.382
-            fib_618 = close - (close - sma200) * 0.618
-            fib_100 = sma200
-        else:
-            fib_382 = close + (sma200 - close) * 0.382
-            fib_618 = close + (sma200 - close) * 0.618
-            fib_100 = sma200
+    # ============== FIBONACCI (Swing High/Low 120D) ==============
+    swing_h = cur.get("swing_high_120")
+    swing_l = cur.get("swing_low_120")
+    if pd.isna(swing_h) or swing_h == 0:
+        swing_h = day_high
+    if pd.isna(swing_l) or swing_l == 0:
+        swing_l = day_low
+
+    fib_diff = swing_h - swing_l
+    if fib_diff > 0:
+        fib_382 = swing_h - fib_diff * 0.382
+        fib_500 = swing_h - fib_diff * 0.500
+        fib_618 = swing_h - fib_diff * 0.618
+        fib_100 = swing_l
     else:
-        fib_382 = fib_618 = fib_100 = 0
+        fib_382 = fib_500 = fib_618 = fib_100 = close
 
     # ============== SUPPORT/RESISTANCE ==============
-    support = bb_lower if not pd.isna(bb_lower) else day_low
-    resistance = cur.get("bb_upper", day_high)
+    supp_candidates = [x for x in [bb_lower, swing_l] if not pd.isna(x)]
+    res_candidates = [x for x in [cur.get("bb_upper"), swing_h] if not pd.isna(x)]
+    support = min(supp_candidates) if supp_candidates else day_low
+    resistance = max(res_candidates) if res_candidates else day_high
 
     # ============== RECOMMENDATION ==============
     rec = "CHƯA NÊN MUA"
@@ -445,15 +413,17 @@ def format_stock_analysis(symbol: str, df: pd.DataFrame) -> str:
         lines.append(f"  • Cắt lỗ: {_fmt(sl)}đ ({sl_pct:.1f}%)")
         lines.append(f"  • Target 1 (2xATR): {_fmt(tp1)}đ (RR {rr1:.1f})")
         lines.append(f"  • Target 2 (3xATR): {_fmt(tp2)}đ")
-    if not pd.isna(sma200) and sma200 > 0:
+    if fib_diff > 0:
         lines.append(f"  • Fib 0.382: {_fmt(fib_382)}đ")
+        lines.append(f"  • Fib 0.500: {_fmt(fib_500)}đ")
         lines.append(f"  • Fib 0.618: {_fmt(fib_618)}đ")
-        lines.append(f"  • Fib 1.0 (SMA200): {_fmt(fib_100)}đ")
+        lines.append(f"  • Fib 1.0 (Swing Low): {_fmt(fib_100)}đ")
     if not pd.isna(rsi):
         lines.append(f"  • RSI: {_fmt(rsi)}")
     if not pd.isna(atr):
         atr_pct = (atr_val / close) * 100 if close > 0 else 0
         lines.append(f"  • ATR: {_fmt(atr)} ({atr_pct:.1f}%)")
+
 
     lines.append("")
     lines.append(f"{rec_icon} *KHUYẾN NGHỊ:* {rec}")

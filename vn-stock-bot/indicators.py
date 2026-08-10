@@ -9,7 +9,7 @@ import pandas as pd
 from config import (
     EMA_SHORT, EMA_LONG, RSI_PERIOD, ATR_PERIOD,
     MACD_FAST, MACD_SLOW, MACD_SIGNAL,
-    BB_PERIOD, BB_STD, VOLUME_MA_PERIOD,
+    BB_PERIOD, BB_STD, VOLUME_MA_PERIOD, FIB_LOOKBACK_DAYS
 )
 
 logger = logging.getLogger(__name__)
@@ -44,7 +44,7 @@ def _sma(series: pd.Series, length: int) -> pd.Series:
 
 
 def _rsi(close: pd.Series, length: int = 14) -> pd.Series:
-    """Tính Relative Strength Index (RSI) dựa trên EWM.
+    """Tính Relative Strength Index (RSI) theo chuẩn Wilder's Smoothing.
 
     Args:
         close: Chuỗi giá đóng cửa.
@@ -56,9 +56,9 @@ def _rsi(close: pd.Series, length: int = 14) -> pd.Series:
     delta = close.diff()
     gain = delta.where(delta > 0, 0.0)
     loss = -delta.where(delta < 0, 0.0)
-    avg_gain = gain.ewm(alpha=1 / length, min_periods=length).mean()
-    avg_loss = loss.ewm(alpha=1 / length, min_periods=length).mean()
-    rs = avg_gain / avg_loss
+    avg_gain = gain.ewm(com=length - 1, min_periods=length, adjust=False).mean()
+    avg_loss = loss.ewm(com=length - 1, min_periods=length, adjust=False).mean()
+    rs = avg_gain / avg_loss.replace(0, 1e-10)
     return 100 - (100 / (1 + rs))
 
 
@@ -126,7 +126,7 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     """Tính toàn bộ chỉ báo kỹ thuật cho DataFrame OHLCV.
 
     Thêm các cột: ema_short, ema_long, sma_50, sma_200, rsi, macd, macd_signal,
-    macd_hist, atr, bb_upper, bb_middle, bb_lower, volume_ma.
+    macd_hist, atr, bb_upper, bb_middle, bb_lower, volume_ma, swing_high_120, swing_low_120.
 
     Args:
         df: DataFrame chứa OHLCV + cột "time".
@@ -164,7 +164,13 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
 
     df["volume_ma"] = _sma(df["volume"], VOLUME_MA_PERIOD)
 
+    # Swing High & Swing Low cho Fibonacci và Hỗ trợ/Kháng cự chuẩn
+    window_len = min(FIB_LOOKBACK_DAYS, len(df))
+    df["swing_high_120"] = df["high"].rolling(window=window_len, min_periods=20).max()
+    df["swing_low_120"] = df["low"].rolling(window=window_len, min_periods=20).min()
+
     return df
+
 
 
 def compute_indicators_batch(data: dict) -> dict:

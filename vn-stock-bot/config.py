@@ -13,7 +13,9 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
 # ── Watchlist ─────────────────────────────────────────────
-WATCHLIST = os.getenv("STOCK_CODES", "").split(",")
+raw_codes = os.getenv("STOCK_CODES", "FPT,SSI,VCB,VHM,HPG")
+WATCHLIST = [code.strip().upper() for code in raw_codes.split(",") if code.strip()]
+
 
 # ── Thời gian ─────────────────────────────────────────────
 TIMEZONE = "Asia/Ho_Chi_Minh"
@@ -35,4 +37,6 @@ BB_PERIOD = 20
 BB_STD = 2
 VOLUME_MA_PERIOD = 20
 VOLUME_SPIKE_RATIO = 1.5
-HISTORICAL_DAYS = 250
+HISTORICAL_DAYS = 365
+FIB_LOOKBACK_DAYS = 120
+

@@ -65,6 +65,8 @@ async def scan_session():
     data = fetcher.fetch_multiple_historical()
     if not data:
         return
+    for sym in list(data.keys()):
+        data[sym] = fetcher.update_with_realtime(data[sym], sym)
     data = compute_indicators_batch(data)
     signals = scan_all(data)
     opportunities = detect_entry_opportunity(data)
@@ -114,7 +116,10 @@ async def scan_pre_close():
     data = fetcher.fetch_multiple_historical()
     if not data:
         return
+    for sym in list(data.keys()):
+        data[sym] = fetcher.update_with_realtime(data[sym], sym)
     data = compute_indicators_batch(data)
+
 
     for symbol, df in data.items():
         if df.empty or len(df) < 2:
