@@ -42,7 +42,7 @@ fetcher = DataFetcher()
 async def scan_pre_market():
     """Job 8:30 AM: quét watchlist, gửi báo cáo tiềm năng + downtrend."""
     logger.info("=== Pre-market scan started ===")
-    data = fetcher.fetch_multiple_historical()
+    data = fetcher.fetch_multiple_historical(symbols=WATCHLIST)
     if not data:
         logger.warning("No data fetched")
         return
@@ -62,7 +62,7 @@ async def scan_pre_market():
 async def scan_session():
     """Job giữa phiên: phân tích top 5 mã biến động + gửi tín hiệu mới."""
     logger.info("=== Session scan started ===")
-    data = fetcher.fetch_multiple_historical()
+    data = fetcher.fetch_multiple_historical(symbols=WATCHLIST)
     if not data:
         return
     for sym in list(data.keys()):
@@ -113,7 +113,7 @@ async def scan_pre_close():
     """Job 14:30: cảnh báo mã có biến động giá > 3% trước giờ ATC."""
     logger.info("=== Pre-close scan started ===")
     warning_signals = []
-    data = fetcher.fetch_multiple_historical()
+    data = fetcher.fetch_multiple_historical(symbols=WATCHLIST)
     if not data:
         return
     for sym in list(data.keys()):
@@ -141,7 +141,7 @@ async def scan_pre_close():
 async def scan_post_market():
     """Job 15:15: tổng kết phiên — top biến động + xu hướng + volume."""
     logger.info("=== Post-market scan started ===")
-    data = fetcher.fetch_multiple_historical()
+    data = fetcher.fetch_multiple_historical(symbols=WATCHLIST)
     if not data:
         return
     data = compute_indicators_batch(data)
