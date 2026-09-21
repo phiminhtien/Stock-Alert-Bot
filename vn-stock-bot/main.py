@@ -24,6 +24,7 @@ from telegram_notify import (
     format_pre_market_report,
     format_post_market_report,
     format_stock_analysis,
+    format_signal_alert,
 )
 
 logging.basicConfig(
@@ -72,9 +73,9 @@ async def scan_session():
     opportunities = detect_entry_opportunity(data)
 
     if opportunities:
-        lines = ["🎯 *ĐIỂM VÀO LỊNH HỢP LÝ:*"]
+        lines = ["🎯 *CƠ HỘI VÀO LỆNH TỐI ƯU:*"]
         for opp in opportunities[:5]:
-            lines.append(f"  ✅ *{opp['symbol']}* — {opp['entry_score']}/10 — {opp['price']}đ")
+            lines.append(f"  ✅ *{opp['symbol']}* — Điểm: {opp['entry_score']}/10 — Giá: {opp['price']}đ")
             if opp.get("reason"):
                 lines.append(f"    └ {opp['reason']}")
         lines.append("")
@@ -98,12 +99,8 @@ async def scan_session():
         await asyncio.sleep(0.5)
 
     for sig in signals:
-        t = sig.get("type", "?")
-        icon = {"entry": "🟢", "stop_loss": "🔴", "take_profit": "💰", "potential": "📈", "downtrend": "📉"}.get(t, "•")
-        lines = [f"{icon} *{sig.get('symbol','?')}* — {t}: {sig.get('price','?')}"]
-        if sig.get("reason"):
-            lines.append(f"    └ {sig.get('reason')}")
-        await send_message("\n".join(lines))
+        alert_msg = format_signal_alert(sig)
+        await send_message(alert_msg)
         await asyncio.sleep(0.3)
 
     logger.info("=== Session scan done ===")

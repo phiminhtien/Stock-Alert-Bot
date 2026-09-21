@@ -33,10 +33,12 @@ ATR_PERIOD = 14
 MACD_FAST = 12
 MACD_SLOW = 26
 MACD_SIGNAL = 9
-BB_PERIOD = 20
-BB_STD = 2
+BB_PERIOD = 10  # Chiều dài dải Bollinger = 10 theo yêu cầu
+BB_STD = 2      # Mult = 2 theo yêu cầu
 VOLUME_MA_PERIOD = 20
 VOLUME_SPIKE_RATIO = 1.5
 HISTORICAL_DAYS = 365
 FIB_LOOKBACK_DAYS = 120
+TRENDLINE_LOOKBACK = 30
+CONSECUTIVE_BARS_ALERT = 3  # Ngưỡng cảnh báo số nhịp tăng/giảm liên tiếp
 

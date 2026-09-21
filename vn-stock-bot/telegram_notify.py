@@ -1,6 +1,12 @@
-"""Gửi thông báo Telegram và định dạng báo cáo phân tích.
+"""Gửi thông báo Telegram và định dạng báo cáo phân tích kỹ thuật chuyên sâu.
 
 Sử dụng python-telegram-bot (async) để gửi tin nhắn qua Bot API.
+Tích hợp:
+- MACD (12, 26, 9): Histogram, Golden/Death Cross, động lượng.
+- Bollinger Bands (10, 2): Squeeze, %B, tiếp xúc dải trên/dưới.
+- Fibonacci: Retracement 0.382, 0.500, 0.618, 1.000.
+- Đường Trendline & Xu hướng: Hỗ trợ/Kháng cự động, khoảng cách tới giá.
+- Số nhịp tăng/giảm liên tiếp & Tỷ lệ nến tăng/giảm 20 phiên.
 """
 
 import logging
@@ -12,7 +18,6 @@ from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 from signals import _compute_entry_score
 
 logger = logging.getLogger(__name__)
-
 
 _bot: Bot | None = None
 
@@ -54,18 +59,18 @@ async def send_message(text: str, chat_id: str | None = None) -> bool:
 
 
 def escape_markdown(text: str) -> str:
-    """Escape các ký tự đặc biệt trong Markdown.
-
-    Args:
-        text: Chuỗi cần escape.
-
-    Returns:
-        Chuỗi đã escape.
-    """
+    """Escape các ký tự đặc biệt trong Markdown."""
     special = ["_", "*", "[", "]", "(", ")", "~", "`", ">", "#", "+", "-", "=", "|", "{", "}", ".", "!"]
     for ch in special:
         text = text.replace(ch, f"\\{ch}")
     return text
+
+
+def _fmt(v) -> str:
+    """Format số thành chuỗi 2 chữ số thập phân. Trả 'N/A' nếu NaN."""
+    if pd.isna(v):
+        return "N/A"
+    return f"{float(v):.2f}"
 
 
 def _rsi_label(rsi: float) -> str:
@@ -73,9 +78,9 @@ def _rsi_label(rsi: float) -> str:
     if pd.isna(rsi):
         return "N/A"
     if rsi <= 30:
-        return "oversold"
+        return "quá bán"
     if rsi >= 70:
-        return "overbought"
+        return "quá mua"
     if rsi < 40:
         return "yếu"
     if rsi > 60:
@@ -83,108 +88,98 @@ def _rsi_label(rsi: float) -> str:
     return "trung tính"
 
 
-def _trend_label(row) -> str:
-    """Trả về nhãn xu hướng dựa trên SMA50/SMA200."""
-    sma50 = row.get("sma_50")
-    sma200 = row.get("sma_200")
-    close = row.get("close")
-    if pd.isna(sma50) or pd.isna(sma200):
-        return ""
-    if close > sma50 and close > sma200:
-        return "xu hướng lên"
-    if close < sma50 and close < sma200:
-        return "xu hướng xuống"
-    return "sideways"
-
-
-def _volume_label(row) -> str:
-    """Trả về nhãn volume so với trung bình 20 phiên."""
-    vol = row.get("volume", 0)
-    vol_ma = row.get("volume_ma", 0)
-    if pd.isna(vol_ma) or vol_ma == 0:
-        return ""
-    ratio = vol / vol_ma
-    if ratio >= 1.5:
-        return f"đột biến x{ratio:.1f}"
-    if ratio >= 1.2:
-        return f"cao x{ratio:.1f}"
-    return ""
-
-
 def _macd_label(row) -> str:
-    """Trả về trạng thái MACD histogram (dương/âm)."""
+    """Trả về trạng thái MACD (12, 26, 9) và giao cắt."""
     hist = row.get("macd_hist")
     signal = row.get("macd_signal")
     macd = row.get("macd")
     if pd.isna(hist) or pd.isna(macd) or pd.isna(signal):
-        return ""
+        return "N/A"
+    parts = []
+    if row.get("macd_bullish_cross", False):
+        parts.append("Golden Cross (cắt lên) 🔥")
+    elif row.get("macd_bearish_cross", False):
+        parts.append("Death Cross (cắt xuống) ⚠️")
     if hist > 0:
-        return "dương"
-    return "âm"
+        parts.append(f"Hist dương (+{hist:.2f})")
+    else:
+        parts.append(f"Hist âm ({hist:.2f})")
+    return " | ".join(parts)
 
 
 def _bb_label(row) -> str:
-    """Trả về vị trí giá so với Bollinger Bands."""
+    """Trả về vị trí giá so với Bollinger Bands (10, 2)."""
+    pct_b = row.get("bb_percent_b")
+    squeeze = row.get("bb_squeeze", False)
+    parts = []
+    if squeeze:
+        parts.append("Nén hẹp (Squeeze) ⚡")
+    if not pd.isna(pct_b):
+        if pct_b >= 1.0:
+            parts.append("Vượt biên trên (Quá mua)")
+        elif pct_b >= 0.8:
+            parts.append("Sát biên trên")
+        elif pct_b <= 0.0:
+            parts.append("Thủng biên dưới (Quá bán)")
+        elif pct_b <= 0.2:
+            parts.append("Sát biên dưới (Hỗ trợ)")
+        else:
+            parts.append(f"%B={pct_b:.2f}")
+    return " - ".join(parts) if parts else "Bình thường"
+
+
+def _consecutive_label(row) -> str:
+    """Trả về chuỗi số phiên tăng hoặc giảm liên tiếp."""
+    u = row.get("consec_up", 0)
+    d = row.get("consec_down", 0)
+    if u > 0:
+        return f"{int(u)} phiên tăng liên tiếp 🔥"
+    elif d > 0:
+        return f"{int(d)} phiên giảm liên tiếp ❄️"
+    return "Đi ngang"
+
+
+def _trendline_label(row) -> str:
+    """Trả về chuỗi hỗ trợ / kháng cự từ đường Trendline."""
     close = row.get("close")
-    upper = row.get("bb_upper")
-    lower = row.get("bb_lower")
-    if pd.isna(close) or pd.isna(upper) or pd.isna(lower):
-        return ""
-    if close >= upper:
-        return "sát trên BB"
-    if close <= lower:
-        return "sát dưới BB"
-    return ""
-
-
-def _fmt(v) -> str:
-    """Format số thành chuỗi 2 chữ số thập phân. Trả 'N/A' nếu NaN."""
-    if pd.isna(v):
-        return "N/A"
-    return f"{v:.2f}"
+    supp = row.get("trendline_support")
+    res = row.get("trendline_resistance")
+    parts = []
+    if not pd.isna(supp) and not pd.isna(close) and supp > 0:
+        dist_supp = ((close - supp) / supp) * 100
+        parts.append(f"Hỗ trợ: {_fmt(supp)}đ ({dist_supp:+.1f}%)")
+    if not pd.isna(res) and not pd.isna(close) and close > 0:
+        dist_res = ((res - close) / close) * 100
+        parts.append(f"Kháng cự: {_fmt(res)}đ (+{dist_res:.1f}%)")
+    return " | ".join(parts) if parts else "N/A"
 
 
 def format_pre_market_report(potential: list, downtrend: list) -> str:
-    """Định dạng báo cáo trước phiên (8:30 AM).
-
-    Args:
-        potential: Danh sách tín hiệu tiềm năng.
-        downtrend: Danh sách tín hiệu downtrend.
-
-    Returns:
-        Chuỗi Markdown báo cáo.
-    """
-    lines = ["*[TRƯỚC PHIÊN]* Báo cáo đầu ngày"]
+    """Định dạng báo cáo trước phiên (8:30 AM)."""
+    lines = ["*[TRƯỚC PHIÊN]* Báo cáo tổng hợp đầu ngày"]
     lines.append("")
     if potential:
-        lines.append(f"*📈 Cổ phiếu tiềm năng ({len(potential)}):*")
+        lines.append(f"*📈 Cổ phiếu tiềm năng tích lũy ({len(potential)}):*")
         for s in potential:
             rsi = s.get("rsi", "N/A")
             reason = s.get("reason", "")
-            lines.append(f"  • {s['symbol']} — giá {s.get('price','?')} | RSI {rsi} | {reason}")
+            lines.append(f"  • *{s['symbol']}* — giá {s.get('price','?')}đ | RSI {rsi} | {reason}")
     if downtrend:
         lines.append("")
-        lines.append(f"*📉 Cổ phiếu downtrend ({len(downtrend)}):*")
+        lines.append(f"*📉 Cổ phiếu downtrend / rủi ro ({len(downtrend)}):*")
         for s in downtrend:
             rsi = s.get("rsi", "N/A")
             reason = s.get("reason", "")
-            lines.append(f"  • {s['symbol']} — giá {s.get('price','?')} | RSI {rsi} | {reason}")
+            lines.append(f"  • *{s['symbol']}* — giá {s.get('price','?')}đ | RSI {rsi} | {reason}")
     if not potential and not downtrend:
-        lines.append("Không có tín hiệu đặc biệt.")
+        lines.append("Không có tín hiệu kỹ thuật đặc biệt.")
     lines.append("")
     lines.append("— Bot hỗ trợ đầu tư —")
     return "\n".join(lines)
 
 
 def format_post_market_report(summary: list) -> str:
-    """Định dạng báo cáo sau phiên (15:15 PM).
-
-    Args:
-        summary: List dict chứa symbol, change (%), vol_ratio, trend.
-
-    Returns:
-        Chuỗi Markdown báo cáo tổng kết.
-    """
+    """Định dạng báo cáo sau phiên (15:15 PM)."""
     lines = ["*[SAU PHIÊN]* Tổng kết phiên giao dịch"]
     lines.append("")
     for item in summary:
@@ -192,17 +187,64 @@ def format_post_market_report(summary: list) -> str:
         emoji = "🟢" if change > 0 else "🔴"
         vol_str = f"VOL {item.get('vol_ratio','')}" if item.get("vol_ratio") else ""
         trend_str = f" | {item['trend']}" if item.get("trend") else ""
-        lines.append(f"  {emoji} {item['symbol']}: {change:+.2f}%{trend_str} {vol_str}")
+        lines.append(f"  {emoji} *{item['symbol']}*: {change:+.2f}%{trend_str} {vol_str}")
     lines.append("")
     lines.append("— Bot hỗ trợ đầu tư —")
     return "\n".join(lines)
 
 
-def format_stock_analysis(symbol: str, df: pd.DataFrame) -> str:
-    """Phân tích chi tiết một mã chứng khoán.
+def format_signal_alert(sig: dict) -> str:
+    """Định dạng tin nhắn cảnh báo tín hiệu giao dịch riêng lẻ trong phiên."""
+    stype = sig.get("type", "alert")
+    symbol = sig.get("symbol", "?")
+    price = sig.get("price", 0)
+    reason = sig.get("reason", "")
+    strategy = sig.get("strategy", "")
+    sl = sig.get("stop_loss")
+    tp = sig.get("take_profit")
 
-    Hiển thị: giá, khung giá, KL, điểm vào lệnh, điểm chốt lời,
-    hỗ trợ/kháng cự, chiến lược giao dịch, khuyến nghị.
+    if stype == "entry":
+        lines = [f"🟢 *[TÍN HIỆU MUA] {symbol}* — Giá: {_fmt(price)}đ"]
+        if strategy:
+            lines.append(f"  🎯 *Chiến lược:* {strategy}")
+        if sl and tp:
+            lines.append(f"  🛡️ *Cắt lỗ:* {_fmt(sl)}đ | 🎯 *Mục tiêu:* {_fmt(tp)}đ")
+        if reason:
+            lines.append(f"  💡 *Căn cứ:* {reason}")
+        return "\n".join(lines)
+    elif stype == "take_profit":
+        lines = [f"💰 *[CẢNH BÁO CHỐT LỜI] {symbol}* — Giá: {_fmt(price)}đ"]
+        if reason:
+            lines.append(f"  ⚠️ *Căn cứ:* {reason}")
+        return "\n".join(lines)
+    elif stype == "potential":
+        rsi = sig.get("rsi", "N/A")
+        lines = [f"📈 *[TIỀM NĂNG TÍCH LŨY] {symbol}* — Giá: {_fmt(price)}đ | RSI: {rsi}"]
+        if reason:
+            lines.append(f"  💡 *Căn cứ:* {reason}")
+        return "\n".join(lines)
+    elif stype == "downtrend":
+        rsi = sig.get("rsi", "N/A")
+        lines = [f"📉 *[CẢNH BÁO RỦI RO / DOWNTREND] {symbol}* — Giá: {_fmt(price)}đ | RSI: {rsi}"]
+        if reason:
+            lines.append(f"  ⚠️ *Căn cứ:* {reason}")
+        return "\n".join(lines)
+    else:
+        lines = [f"🔔 *[{stype.upper()}] {symbol}* — {_fmt(price)}đ"]
+        if reason:
+            lines.append(f"  └ {reason}")
+        return "\n".join(lines)
+
+
+def format_stock_analysis(symbol: str, df: pd.DataFrame) -> str:
+    """Phân tích chi tiết một mã chứng khoán theo bộ chỉ báo kỹ thuật nâng cao.
+
+    Hiển thị:
+    - Giá, biên độ, khối lượng, nhịp nến tăng/giảm liên tiếp.
+    - Điểm vào lệnh & Điểm rủi ro (0-10).
+    - MACD (12, 26, 9) và Bollinger Bands (10, 2).
+    - Đường Trendline hỗ trợ / kháng cự và các mốc Fibonacci Retracement.
+    - Chiến lược giao dịch & Khuyến nghị khung thời gian (T+, Ngắn hạn, Dài hạn).
 
     Args:
         symbol: Mã chứng khoán.
@@ -220,34 +262,36 @@ def format_stock_analysis(symbol: str, df: pd.DataFrame) -> str:
     close = cur["close"]
 
     rsi = cur.get("rsi")
+    macd = cur.get("macd")
+    signal = cur.get("macd_signal")
     macd_hist = cur.get("macd_hist")
     atr = cur.get("atr")
-    sma20 = cur.get("ema_short")
-    ema50 = cur.get("ema_long")
     sma50 = cur.get("sma_50")
     sma200 = cur.get("sma_200")
+    bb_upper = cur.get("bb_upper")
     bb_mid = cur.get("bb_middle")
     bb_lower = cur.get("bb_lower")
+    pct_b = cur.get("bb_percent_b")
+    t_supp = cur.get("trendline_support")
+    t_res = cur.get("trendline_resistance")
 
-    has_data = not all(pd.isna(x) for x in [rsi, atr, sma50])
-
+    # Format RSI & MACD
     rsi_lbl = _rsi_label(rsi)
-    rsi_str = f"RSI(14): {rsi:.2f} - {rsi_lbl}" if not pd.isna(rsi) else "RSI(14): N/A"
+    rsi_str = f"RSI(14): {rsi:.2f} ({rsi_lbl})" if not pd.isna(rsi) else "RSI(14): N/A"
+    macd_str = f"MACD(12,26,9): {_fmt(macd)} | Sig: {_fmt(signal)} ({_macd_label(cur)})"
 
-    macd_str = f"MACD Histogram dương - Đà tăng" if not pd.isna(macd_hist) and macd_hist > 0 else f"MACD Histogram âm - Đà giảm" if not pd.isna(macd_hist) else "MACD: N/A"
+    # Format BB(10, 2)
+    bb_str = f"BB(10,2): {_fmt(bb_lower)} - {_fmt(bb_mid)} - {_fmt(bb_upper)}đ ({_bb_label(cur)})"
 
+    # Format Trend & Trendline
     trend_str = ""
     if not pd.isna(sma200) and not pd.isna(close):
         if close > sma200:
-            trend_str = f"Giá > SMA200 ({_fmt(sma200)}) - Uptrend"
+            trend_str = f"Uptrend (Giá > SMA200: {_fmt(sma200)}đ)"
         else:
-            trend_str = f"Giá < SMA200 ({_fmt(sma200)}) - Downtrend"
+            trend_str = f"Downtrend (Giá < SMA200: {_fmt(sma200)}đ)"
     else:
         trend_str = "Xu hướng: N/A"
-
-    sma20_str = ""
-    if not pd.isna(sma20) and not pd.isna(close):
-        sma20_str = f"Giá {'>' if close > sma20 else '<'} EMA20 ({_fmt(sma20)})"
 
     cross_str = ""
     if not pd.isna(sma50) and not pd.isna(sma200):
@@ -256,66 +300,51 @@ def format_stock_analysis(symbol: str, df: pd.DataFrame) -> str:
         else:
             cross_str = "Death Cross: SMA50 < SMA200"
 
-    # ============== ENTRY SCORE (0-10) ==============
+    tline_str = f"Trendline: {_trendline_label(cur)}"
+
+    # Format Consecutive bars
+    bars_str = _consecutive_label(cur)
+    up20 = cur.get("up_days_20")
+    down20 = cur.get("down_days_20")
+    if not pd.isna(up20) and not pd.isna(down20):
+        bars_str += f" (20 phiên: {int(up20)} tăng / {int(down20)} giảm)"
+
+    # ENTRY SCORE (0-10)
     entry_score = _compute_entry_score(cur)
     entry_str = f"{entry_score:.1f}/10"
     entry_icon = "✅" if entry_score >= 6.0 else "⏳" if entry_score >= 4.0 else "❌"
 
-    # ============== RISK SCORE (0-10) ==============
-    risk_score = 5.0
-    rr1 = 0.0
-    sl_pct = 0.0
-
-    atr_val = atr if not pd.isna(atr) else 0
-    if atr_val > 0 and close > 0:
-        sl_pct = (atr_val * 1.5 / close) * 100
-        risk_amt = atr_val * 1.5
-        tp1_profit = atr_val * 2
-        tp2_profit = atr_val * 3
-        rr1 = tp1_profit / risk_amt if risk_amt > 0 else 0
-        rr2 = tp2_profit / risk_amt if risk_amt > 0 else 0
-
-        # SL distance
-        if sl_pct <= 2.0:
-            risk_score += 2.0
-        elif sl_pct <= 3.5:
-            risk_score += 1.5
-        elif sl_pct <= 5.0:
-            risk_score += 0.5
-        else:
-            risk_score -= 1.0
-
-        # R:R ratio
-        if rr1 >= 2.0:
-            risk_score += 2.0
-        elif rr1 >= 1.5:
-            risk_score += 1.0
-        else:
-            risk_score -= 1.0
-
-        # Volatility
-        atr_pct = (atr_val / close) * 100
-        if 1.0 <= atr_pct <= 4.0:
-            risk_score += 1.0
-        elif atr_pct > 7.0:
-            risk_score -= 1.0
-
-        # BB position
-        if not pd.isna(close) and not pd.isna(bb_mid):
-            if close < bb_mid:
-                risk_score += 0.5
-            if not pd.isna(bb_lower) and close <= bb_lower * 1.03:
-                risk_score += 0.5
-
-    risk_score = max(0, min(10, risk_score))
-    risk_icon = "✅" if risk_score >= 6 else "⚪" if risk_score >= 4 else "🔴"
-
-    # ============== KHOẢNG CHỐT LỜI ==============
+    # RISK SCORE (0-10)
+    atr_val = atr if not pd.isna(atr) else (close * 0.03)
     sl = close - atr_val * 1.5 if close > 0 else 0
+    sl_pct = (atr_val * 1.5 / close) * 100 if close > 0 else 0
     tp1 = close + atr_val * 2
     tp2 = close + atr_val * 3
+    rr1 = 2.0 / 1.5  # ~1.33
 
-    # ============== FIBONACCI (Swing High/Low 120D) ==============
+    risk_score = 5.0
+    if sl_pct <= 2.5:
+        risk_score += 2.0
+    elif sl_pct <= 4.0:
+        risk_score += 1.0
+    else:
+        risk_score -= 1.0
+
+    if not pd.isna(pct_b):
+        if 0.1 <= pct_b <= 0.55:
+            risk_score += 1.5
+        elif pct_b > 0.85:
+            risk_score -= 1.5
+
+    if not pd.isna(rsi) and rsi < 65:
+        risk_score += 1.0
+    elif not pd.isna(rsi) and rsi > 70:
+        risk_score -= 1.5
+
+    risk_score = max(0.0, min(10.0, risk_score))
+    risk_icon = "✅" if risk_score >= 6.0 else "⚪" if risk_score >= 4.0 else "🔴"
+
+    # Fibonacci (Lookback 120D)
     swing_h = cur.get("swing_high_120")
     swing_l = cur.get("swing_low_120")
     if pd.isna(swing_h) or swing_h == 0:
@@ -323,237 +352,206 @@ def format_stock_analysis(symbol: str, df: pd.DataFrame) -> str:
     if pd.isna(swing_l) or swing_l == 0:
         swing_l = day_low
 
-    fib_diff = swing_h - swing_l
-    if fib_diff > 0:
-        fib_382 = swing_h - fib_diff * 0.382
-        fib_500 = swing_h - fib_diff * 0.500
-        fib_618 = swing_h - fib_diff * 0.618
-        fib_100 = swing_l
+    fib_382 = cur.get("fib_382", swing_h)
+    fib_500 = cur.get("fib_500", (swing_h + swing_l) / 2)
+    fib_618 = cur.get("fib_618", swing_l)
+
+    # Support / Resistance
+    supp_candidates = [x for x in [bb_lower, t_supp, fib_618, swing_l] if not pd.isna(x) and x <= close]
+    res_candidates = [x for x in [bb_upper, t_res, fib_382, swing_h] if not pd.isna(x) and x >= close]
+    support = max(supp_candidates) if supp_candidates else (bb_lower if not pd.isna(bb_lower) else day_low)
+    resistance = min(res_candidates) if res_candidates else (bb_upper if not pd.isna(bb_upper) else day_high)
+
+    # Recommendation
+    if entry_score >= 6.5 and risk_score >= 5.5:
+        rec = "CÓ THỂ MUA"
+        rec_icon = "🟢"
+    elif entry_score >= 5.0:
+        rec = "THEO DÕI TÍCH LŨY"
+        rec_icon = "🟡"
     else:
-        fib_382 = fib_500 = fib_618 = fib_100 = close
-
-    # ============== SUPPORT/RESISTANCE ==============
-    supp_candidates = [x for x in [bb_lower, swing_l] if not pd.isna(x)]
-    res_candidates = [x for x in [cur.get("bb_upper"), swing_h] if not pd.isna(x)]
-    support = min(supp_candidates) if supp_candidates else day_low
-    resistance = max(res_candidates) if res_candidates else day_high
-
-    # ============== RECOMMENDATION ==============
-    rec = "CHƯA NÊN MUA"
-    rec_icon = "🔴"
-    if entry_score >= 7 and risk_score >= 6:
-        rec = "CÓ THỂ MUA"
-        rec_icon = "🟢"
-    elif entry_score >= 6 and risk_score >= 5:
-        rec = "CÓ THỂ MUA"
-        rec_icon = "🟢"
-    elif entry_score >= 5:
-        rec = "THEO DÕI"
-        rec_icon = "🟡"
-    elif entry_score >= 4:
-        rec = "THEO DÕI"
-        rec_icon = "🟡"
-
-    # ============== FORMAT CHUỖI PHẦN TỬ PHỤ ==============
-    _bb_mid_str = ""
-    if not pd.isna(close) and not pd.isna(bb_mid):
-        if close < bb_mid:
-            _bb_mid_str = "Giá dưới BB Mid"
-            if not pd.isna(bb_lower) and close <= bb_lower * 1.03:
-                _bb_mid_str += " - Sát BB Lower"
-        else:
-            _bb_mid_str = "Giá trên BB Mid"
+        rec = "CHƯA NÊN MUA"
+        rec_icon = "🔴"
 
     vol_str = f"{cur['volume']:,.0f}".replace(",", ".")
+    time_str = pd.Timestamp.now(tz="Asia/Ho_Chi_Minh").strftime("%H:%M %d/%m")
 
     lines = [
-        f"🔔 *{symbol}: {_fmt(close)}đ* ({change_pct:+.2f}%) — {pd.Timestamp.now(tz='Asia/Ho_Chi_Minh').strftime('%H:%M %d/%m')}",
-        "━" * 35,
+        f"🔔 *{symbol}: {_fmt(close)}đ* ({change_pct:+.2f}%) — {time_str}",
+        "━" * 32,
         "",
         f"💹 *Giá:* {_fmt(close)}đ  {'🔴' if change_pct < 0 else '🟢'} {change_pct:+.2f}%",
-        f"📈 Khung: {_fmt(day_low)} - {_fmt(day_high)}",
-        f"📊 KL: {vol_str}",
+        f"📈 Biên độ: {_fmt(day_low)} - {_fmt(day_high)}",
+        f"📊 Khối lượng: {vol_str}",
+        f"⏳ Nhịp nến: {bars_str}",
         "",
-        "━" * 35,
+        "━" * 32,
         "",
         f"🎯 *ĐIỂM VÀO LỆNH:* {entry_str} {entry_icon}",
+        f"  • {macd_str}",
+        f"  • {bb_str}",
+        f"  • {tline_str}",
+        f"  • {trend_str}",
+        f"  • {rsi_str}",
     ]
+    if cross_str:
+        lines.append(f"  • {cross_str}")
 
-    if has_data:
-        lines.append(f"  • {rsi_str}")
-        lines.append(f"  • {macd_str}")
-        lines.append(f"  • {trend_str}")
-        if sma20_str:
-            lines.append(f"  • {sma20_str}")
-        if cross_str:
-            lines.append(f"  • {cross_str}")
+    lines.extend([
+        "",
+        f"💰 *ĐIỂM RỦI RO:* {risk_score:.1f}/10 {risk_icon}",
+        f"  • Cắt lỗ đề xuất: {_fmt(sl)}đ ({sl_pct:.1f}%)",
+        f"  • Target 1 (2xATR): {_fmt(tp1)}đ (RR {rr1:.1f})",
+        f"  • Target 2 (3xATR): {_fmt(tp2)}đ",
+        "",
+        "━" * 32,
+        "",
+        "📍 *HỖ TRỢ / KHÁNG CỰ & FIBONACCI*",
+        f"  • Hỗ trợ gần: {_fmt(support)}đ",
+        f"  • Kháng cự gần: {_fmt(resistance)}đ",
+        f"  • Fib 0.382: {_fmt(fib_382)}đ | Fib 0.500: {_fmt(fib_500)}đ",
+        f"  • Fib 0.618 (Vùng vàng): {_fmt(fib_618)}đ",
+        f"  • Đáy/Đỉnh 120D: {_fmt(swing_l)}đ - {_fmt(swing_h)}đ",
+        "",
+        f"{rec_icon} *KHUYẾN NGHỊ:* {rec}",
+        "",
+        "⏳ *THỜI GIAN NẮM GIỮ*",
+    ])
 
-    lines.append("")
-    lines.append(f"💰 *ĐIỂM RỦI RO:* {risk_score:.1f}/10 {risk_icon}")
-    if atr_val > 0 and close > 0:
-        lines.append(f"  • Khoảng chốt lời: {_fmt(tp1)}đ - {_fmt(tp2)}đ")
-        lines.append(f"  • R:R = {rr1:.1f} | SL: {sl_pct:.1f}%")
-    if _bb_mid_str:
-        lines.append(f"  • {_bb_mid_str}")
-    if not pd.isna(rsi):
-        lines.append(f"  • RSI {'vùng quá mua' if rsi > 60 else 'vùng an toàn' if rsi < 40 else 'trung tính'}")
-
-    lines.append("")
-    lines.append("━" * 35)
-    lines.append("")
-
-    if not pd.isna(support) and not pd.isna(resistance):
-        lines.append(f"📍 *HỖ TRỢ/KHÁNG CỰ*")
-        lines.append(f"  • Hỗ trợ gần: {_fmt(support)}đ")
-        lines.append(f"  • Kháng cự gần: {_fmt(resistance)}đ")
-        lines.append("")
-
-    lines.append(f"📌 *CHIẾN LƯỢC GIAO DỊCH*")
-    if close > 0:
-        lines.append(f"  • Cắt lỗ: {_fmt(sl)}đ ({sl_pct:.1f}%)")
-        lines.append(f"  • Target 1 (2xATR): {_fmt(tp1)}đ (RR {rr1:.1f})")
-        lines.append(f"  • Target 2 (3xATR): {_fmt(tp2)}đ")
-    if fib_diff > 0:
-        lines.append(f"  • Fib 0.382: {_fmt(fib_382)}đ")
-        lines.append(f"  • Fib 0.500: {_fmt(fib_500)}đ")
-        lines.append(f"  • Fib 0.618: {_fmt(fib_618)}đ")
-        lines.append(f"  • Fib 1.0 (Swing Low): {_fmt(fib_100)}đ")
-    if not pd.isna(rsi):
-        lines.append(f"  • RSI: {_fmt(rsi)}")
-    if not pd.isna(atr):
-        atr_pct = (atr_val / close) * 100 if close > 0 else 0
-        lines.append(f"  • ATR: {_fmt(atr)} ({atr_pct:.1f}%)")
-
-
-    lines.append("")
-    lines.append(f"{rec_icon} *KHUYẾN NGHỊ:* {rec}")
-    lines.append("")
-
-    # === THỜI GIAN NẮM GIỮ ===
-    timeframes = _timeframe_recommendation(cur)
-    lines.append("⏳ *THỜI GIAN NẮM GIỮ*")
-    for name, verdict, reason in timeframes:
-        lines.append(f"  {verdict}")
+    for name, verdict, reason in _timeframe_recommendation(cur):
+        lines.append(f"  {verdict} ({name})")
         if reason:
             lines.append(f"    └ {reason}")
 
-    lines.append("=" * 35)
+    lines.append("=" * 32)
     return "\n".join(lines)
 
 
 def _timeframe_recommendation(cur: pd.Series) -> list:
-    """Đánh giá khuyến nghị theo 3 khung thời gian: T+, ngắn hạn, dài hạn.
-
-    Returns:
-        List [tplus_rec, short_rec, long_rec] với tuple (label, icon, reason).
-    """
+    """Đánh giá khuyến nghị theo 3 khung thời gian: T+, ngắn hạn, dài hạn."""
     close = cur.get("close")
     rsi = cur.get("rsi")
     macd_hist = cur.get("macd_hist")
-    ema20 = cur.get("ema_short")
-    ema50 = cur.get("ema_long")
+    macd = cur.get("macd")
+    signal = cur.get("macd_signal")
+    cross_up = cur.get("macd_bullish_cross", False)
     sma50 = cur.get("sma_50")
     sma200 = cur.get("sma_200")
     bb_mid = cur.get("bb_middle")
     bb_lower = cur.get("bb_lower")
+    pct_b = cur.get("bb_percent_b")
+    consec_up = cur.get("consec_up", 0)
+    consec_down = cur.get("consec_down", 0)
+    t_supp = cur.get("trendline_support")
+    fib_618 = cur.get("fib_618")
 
-    # ---- T+ (1-3 ngày): momentum ngắn hạn ----
+    # ---- 1. T+ (1-3 ngày): Động lượng ngắn hạn MACD & BB(10,2) ----
     tplus_score = 0
     tplus_reasons = []
 
-    if not pd.isna(close) and not pd.isna(ema20):
-        if close > ema20:
-            tplus_score += 1
-            tplus_reasons.append("Giá trên EMA20")
-        else:
-            tplus_score -= 1
-    if not pd.isna(macd_hist) and macd_hist > 0:
-        tplus_score += 1
-        tplus_reasons.append("MACD dương")
+    if cross_up or (not pd.isna(macd) and not pd.isna(signal) and macd > signal):
+        tplus_score += 1.5
+        tplus_reasons.append("MACD đà tăng")
+    elif not pd.isna(macd_hist) and macd_hist > 0:
+        tplus_score += 1.0
+        tplus_reasons.append("Histogram dương")
+
+    if not pd.isna(pct_b):
+        if 0.1 <= pct_b <= 0.6:
+            tplus_score += 1.0
+            tplus_reasons.append("Vị thế BB(10,2) đẹp")
+        elif pct_b < 0.1 or (not pd.isna(bb_lower) and close <= bb_lower * 1.02):
+            tplus_score += 1.0
+            tplus_reasons.append("Chạm đáy BB(10,2)")
+        elif pct_b >= 0.9:
+            tplus_score -= 1.0
+            tplus_reasons.append("Sát đỉnh BB(10,2)")
+
+    if 1 <= consec_up <= 2:
+        tplus_score += 0.5
+        tplus_reasons.append("Đầu nhịp tăng")
+    elif consec_down >= 3:
+        tplus_score += 0.5
+        tplus_reasons.append("Sau chuỗi giảm")
+    elif consec_up >= 4:
+        tplus_score -= 1.0
+        tplus_reasons.append("Tăng nhiều phiên (tránh FOMO)")
+
     if not pd.isna(rsi):
-        if 30 <= rsi <= 65:
-            tplus_score += 1
-            tplus_reasons.append("RSI hợp lý")
-        elif rsi > 75:
-            tplus_score -= 1
+        if 35 <= rsi <= 65:
+            tplus_score += 0.5
+        elif rsi > 70:
+            tplus_score -= 1.0
             tplus_reasons.append("RSI quá mua")
-    if not pd.isna(close) and not pd.isna(bb_lower):
-        if close <= bb_lower * 1.03:
-            tplus_score += 1
-            tplus_reasons.append("Sát BB Lower")
 
-    if tplus_score >= 2:
-        tplus = ("🟢 CÓ THỂ PLAY", " ".join(tplus_reasons[:2]))
-    elif tplus_score >= 1:
-        tplus = ("🟡 ĐỢI XÁC NHẬN", " ".join(tplus_reasons[:2]))
+    if tplus_score >= 2.5:
+        tplus = ("🟢 CÓ THỂ PLAY", " | ".join(tplus_reasons[:2]))
+    elif tplus_score >= 1.0:
+        tplus = ("🟡 ĐỢI XÁC NHẬN", " | ".join(tplus_reasons[:2]))
     else:
-        tplus = ("🔴 KHÔNG PLAY", " ".join(tplus_reasons[:2]) if tplus_reasons else "Momentum yếu")
+        tplus = ("🔴 KHÔNG NÊN PLAY", " | ".join(tplus_reasons[:2]) if tplus_reasons else "Động lượng suy yếu")
 
-    # ---- Ngắn hạn (1-2 tuần): trend trung hạn ----
+    # ---- 2. Ngắn hạn (1-2 tuần): Trendline & BB Mid SMA10 & Fibonacci ----
     short_score = 0
     short_reasons = []
 
-    if not pd.isna(close) and not pd.isna(ema50):
-        if close > ema50:
-            short_score += 1
-            short_reasons.append("Giá trên EMA50")
-        else:
-            short_score -= 1
-    if not pd.isna(sma50) and not pd.isna(sma200):
-        if sma50 > sma200:
-            short_score += 1
-            short_reasons.append("Golden Cross")
-        else:
-            short_score -= 1
-            short_reasons.append("Death Cross")
     if not pd.isna(close) and not pd.isna(bb_mid):
-        if close < bb_mid:
-            short_score += 1
-            short_reasons.append("Dưới BB Mid")
+        if close >= bb_mid:
+            short_score += 1.5
+            short_reasons.append("Trên BB Mid (SMA10)")
         else:
-            short_reasons.append("Trên BB Mid")
-    if not pd.isna(rsi) and 40 <= rsi <= 65:
-        short_score += 1
-        short_reasons.append("RSI ổn định")
+            short_score -= 1.0
+            short_reasons.append("Dưới BB Mid")
 
-    if short_score >= 3:
-        short = ("🟢 NÊN MUA", " ".join(short_reasons[:2]))
-    elif short_score >= 1:
-        short = ("🟡 THEO DÕI", " ".join(short_reasons[:2]))
+    if not pd.isna(t_supp) and not pd.isna(close):
+        if close >= t_supp * 0.99:
+            short_score += 1.0
+            short_reasons.append("Giữ Trendline hỗ trợ")
+        else:
+            short_score -= 1.0
+            short_reasons.append("Gãy Trendline hỗ trợ")
+
+    if not pd.isna(fib_618) and not pd.isna(close):
+        if close >= fib_618 * 0.99:
+            short_score += 1.0
+            short_reasons.append("Trên vùng Fib 0.618")
+
+    if not pd.isna(macd) and not pd.isna(signal) and macd > signal:
+        short_score += 0.5
+
+    if short_score >= 2.5:
+        short = ("🟢 NÊN MUA/NẮM GIỮ", " | ".join(short_reasons[:2]))
+    elif short_score >= 1.0:
+        short = ("🟡 THEO DÕI", " | ".join(short_reasons[:2]))
     else:
-        short = ("🔴 KHÔNG NÊN", " ".join(short_reasons[:2]) if short_reasons else "Xu hướng yếu")
+        short = ("🔴 KHÔNG NÊN", " | ".join(short_reasons[:2]) if short_reasons else "Xu hướng ngắn hạn yếu")
 
-    # ---- Dài hạn (1-3 tháng): trend dài hạn ----
+    # ---- 3. Dài hạn (1-3 tháng): Uptrend SMA200 & SMA50 ----
     long_score = 0
     long_reasons = []
 
     if not pd.isna(close) and not pd.isna(sma200):
         if close > sma200:
-            long_score += 2
+            long_score += 2.0
             long_reasons.append("Uptrend SMA200")
         else:
-            long_score -= 2
+            long_score -= 2.0
             long_reasons.append("Downtrend SMA200")
+
     if not pd.isna(sma50) and not pd.isna(sma200):
         if sma50 > sma200:
-            long_score += 1
-            long_reasons.append("SMA50 > SMA200")
+            long_score += 1.0
+            long_reasons.append("Golden Cross (SMA50 > SMA200)")
         else:
-            long_score -= 1
-    if not pd.isna(rsi) and not pd.isna(sma200):
-        if 45 <= rsi <= 70 and not pd.isna(close) and close > sma200:
-            long_score += 1
-            long_reasons.append("RSI mạnh trong uptrend")
-        elif rsi < 35 and not pd.isna(close) and close > sma200:
-            long_score += 1
-            long_reasons.append("RSI thấp + uptrend = pullback")
+            long_score -= 1.0
+            long_reasons.append("Death Cross (SMA50 < SMA200)")
 
-    if long_score >= 3:
-        long = ("🟢 NÊN GIỮ/MUA", " ".join(long_reasons[:2]))
-    elif long_score >= 1:
-        long = ("🟡 GIỮ XEM", " ".join(long_reasons[:2]))
+    if long_score >= 2.0:
+        long = ("🟢 NÊN TÍCH LŨY/GIỮ", " | ".join(long_reasons[:2]))
+    elif long_score >= 0.0:
+        long = ("🟡 QUAN SÁT THÊM", " | ".join(long_reasons[:2]))
     else:
-        long = ("🔴 KHÔNG MUA DÀI", " ".join(long_reasons[:2]) if long_reasons else "Xu hướng dài hạn yếu")
+        long = ("🔴 KHÔNG NÊN MUA DÀI", " | ".join(long_reasons[:2]) if long_reasons else "Xu hướng dài hạn tiêu cực")
 
     return [("T+ (1-3 ngày)", tplus[0], tplus[1]),
             ("Ngắn hạn (1-2 tuần)", short[0], short[1]),
@@ -561,17 +559,7 @@ def _timeframe_recommendation(cur: pd.Series) -> list:
 
 
 def format_session_report(data: dict, signals: list) -> str:
-    """Định dạng báo cáo giữa phiên.
-
-    Gộp phân tích top 5 mã biến động mạnh nhất + danh sách tín hiệu mới.
-
-    Args:
-        data: Dict {symbol: DataFrame} với chỉ báo.
-        signals: List tín hiệu mới phát hiện.
-
-    Returns:
-        Chuỗi Markdown báo cáo.
-    """
+    """Định dạng báo cáo giữa phiên."""
     now = pd.Timestamp.now(tz="Asia/Ho_Chi_Minh").strftime("%H:%M %d/%m")
     lines = [f"*🔔 GIỮA PHIÊN — Cập nhật {now}*"]
     lines.append("")
@@ -595,12 +583,8 @@ def format_session_report(data: dict, signals: list) -> str:
     if signals:
         lines.append("⚠️ *TÍN HIỆU MỚI:*")
         for s in signals:
-            t = s.get("type", "?")
-            icon = {"entry": "🟢", "stop_loss": "🔴", "take_profit": "💰", "potential": "📈", "downtrend": "📉"}.get(t, "•")
-            lines.append(f"  {icon} *{s.get('symbol','?')}* — {t}: {s.get('price','?')}")
-            if s.get("reason"):
-                lines.append(f"    └ {s.get('reason')}")
+            lines.append(format_signal_alert(s))
+            lines.append("")
 
-    lines.append("")
     lines.append("— Bot hỗ trợ đầu tư —")
     return "\n".join(lines)

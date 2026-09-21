@@ -110,21 +110,25 @@ Chỉnh ngưỡng kỹ thuật trong `vn-stock-bot/config.py`:
 
 ```python
 NOTIFY_INTERVAL_MINUTES = 15    # tần suất báo cáo giữa phiên
-RSI_OVERSOLD = 30               # ngưỡng quá bán
-RSI_OVERBOUGHT = 70             # ngưỡng quá mua
-ATR_STOP_LOSS_FACTOR = 1.5      # hệ số ATR cho stop-loss
-MIN_RR_RATIO = 2.0              # tỷ lệ risk:reward tối thiểu
+MACD_FAST = 12                  # FastLength MACD
+MACD_SLOW = 26                  # SlowLength MACD
+MACD_SIGNAL = 9                 # SignalLength MACD
+BB_PERIOD = 10                  # Chiều dài dải Bollinger = 10
+BB_STD = 2                      # Mult = 2
+FIB_LOOKBACK_DAYS = 120         # Chu kỳ Fibonacci Retracement
+TRENDLINE_LOOKBACK = 30         # Chu kỳ vẽ đường Trendline hỗ trợ / kháng cự
+CONSECUTIVE_BARS_ALERT = 3      # Cảnh báo số nhịp tăng / giảm liên tiếp
 ```
 
 ## Module
 
 | File | Mô tả |
 |---|---|
-| `config.py` | Cấu hình: Telegram, watchlist, ngưỡng kỹ thuật |
+| `config.py` | Cấu hình: Telegram, watchlist, thông số MACD (12,26,9), BB (10,2), Trendline, Fib |
 | `data_fetcher.py` | Lấy dữ liệu OHLCV từ vnstock API (VCI source) |
-| `indicators.py` | Tính chỉ báo: EMA, SMA, RSI, MACD, ATR, BB (thuần pandas) |
-| `signals.py` | Logic phát hiện entry, take-profit, potential, downtrend |
-| `telegram_notify.py` | Gửi Telegram + format báo cáo phân tích chi tiết |
+| `indicators.py` | Tính chỉ báo: MACD, BB(10,2), Trendline, Fibonacci, Nhịp nến tăng/giảm (thuần pandas) |
+| `signals.py` | Logic phát hiện entry (Breakout/Rebound), take-profit, potential, downtrend |
+| `telegram_notify.py` | Gửi Telegram + format báo cáo phân tích chi tiết & cảnh báo realtime |
 | `main.py` | AsyncIOScheduler: 4 job theo cron |
 | `.github/workflows/scan-daily.yml` | GitHub Actions: chạy bot hàng ngày 8:30 AM VN |
 
